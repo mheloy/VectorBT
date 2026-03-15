@@ -14,6 +14,12 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - **Storage** (`src/storage/`): SQLite for metadata + JSON blobs for equity curves and trade lists.
 - **Dashboard** (`src/dashboard/`): Streamlit multipage app. Pages import from `src.*` (sys.path set in `app.py`).
 
+## Strategies
+- **MA Crossover** (`ma_crossover.py`): Fast/slow MA crossover with SMA/EMA choice
+- **RSI Reversal** (`rsi_reversal.py`): RSI oversold/overbought reversals
+- **Bollinger Breakout** (`bollinger_breakout.py`): Bollinger Bands upper/lower breakout
+- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter. Ported from live MT5 bot. Defaults: period=16, factor=1.4, source=hl2. See `docs/strategies/supertrend.md` for parameter history.
+
 ## Key Patterns
 - Strategies return boolean pd.Series for entries/exits — VectorBT handles position management
 - Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call
@@ -31,3 +37,6 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - Init cash default: `$10,000`
 - Frequency strings for VBT: `{"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}`
 - Gold sessions (GMT): Asian 23:00-07:00, London 08:00-16:00, NY 13:00-21:00
+
+## System Instructions
+When I say update the markdown files, you need to update the appropriate strategy markdown files you have just made changes and make of the history of the changes made so we can study or find the best parameters for that specific stratgey. Then update the CLAUDE.md file to update the dcoumentaiton of the current strategy implemented. Also Apply best practices with git. Maybe every new session would be a different branch to ensure it can be rolled back etc.
