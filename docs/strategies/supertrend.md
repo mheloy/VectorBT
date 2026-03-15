@@ -25,9 +25,7 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 | period | 16 | 5-50 | 1 | ATR period for SuperTrend bands |
 | factor | 1.4 | 0.5-5.0 | 0.1 | ATR multiplier for band width |
 | source | hl2 | hl2/close/hlc3/ohlc4 | - | Price source for band center |
-| h1_filter | On | On/Off | - | H1 timeframe confirmation filter |
-| h1_period | 16 | 5-50 | 1 | H1 SuperTrend ATR period |
-| h1_factor | 1.4 | 0.5-5.0 | 0.1 | H1 SuperTrend multiplier |
+| h1_filter | On | On/Off | - | H1 timeframe confirmation filter (uses same period/factor/source) |
 | sl_atr_mult | 1.5 | 0.5-5.0 | 0.1 | SL = ATR(14, M15) * multiplier |
 | rr_ratio | 3.0 | 1.0-5.0 | 0.5 | TP = SL * R:R ratio |
 

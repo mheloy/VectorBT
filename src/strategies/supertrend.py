@@ -226,14 +226,6 @@ class SuperTrendStrategy(BaseStrategy):
                 description="H1 SuperTrend filter",
             ),
             StrategyParam(
-                "h1_period", default=16, min_val=5, max_val=50, step=1,
-                description="H1 filter ATR period",
-            ),
-            StrategyParam(
-                "h1_factor", default=1.4, min_val=0.5, max_val=5.0, step=0.1,
-                description="H1 filter multiplier",
-            ),
-            StrategyParam(
                 "sl_atr_mult", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
                 description="SL ATR multiplier",
             ),
@@ -250,8 +242,6 @@ class SuperTrendStrategy(BaseStrategy):
         factor=1.4,
         source="hl2",
         h1_filter="On",
-        h1_period=16,
-        h1_factor=1.4,
         sl_atr_mult=1.5,
         rr_ratio=3.0,
     ) -> tuple[pd.Series, pd.Series]:
@@ -264,7 +254,7 @@ class SuperTrendStrategy(BaseStrategy):
 
         # H1 filter: only enter long when H1 is in uptrend
         if str(h1_filter) == "On":
-            h1_dir = _h1_direction(df, int(h1_period), float(h1_factor))
+            h1_dir = _h1_direction(df, int(period), float(factor))
             entries = entries & (h1_dir == -1)
 
         entries = entries.fillna(False).astype(bool)
