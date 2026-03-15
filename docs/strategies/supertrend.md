@@ -28,15 +28,26 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 | h1_filter | On | On/Off | - | H1 timeframe confirmation filter |
 | h1_period | 16 | 5-50 | 1 | H1 SuperTrend ATR period |
 | h1_factor | 1.4 | 0.5-5.0 | 0.1 | H1 SuperTrend multiplier |
+| sl_atr_mult | 1.5 | 0.5-5.0 | 0.1 | SL = ATR(14, M15) * multiplier |
+| rr_ratio | 3.0 | 1.0-5.0 | 0.5 | TP = SL * R:R ratio |
+
+## Risk Management
+
+Dynamic ATR-based SL/TP matching the live MT5 bot:
+- **Stop Loss**: ATR(14) on M15 timeframe * `sl_atr_mult` (default 1.5x), converted to % of entry price per bar
+- **Take Profit**: SL distance * `rr_ratio` (default 3.0 R:R)
+- M15 ATR is shifted by 1 bar to avoid look-ahead bias (uses completed M15 candle)
+- When these params are set, the strategy provides per-bar dynamic stops to VBT instead of fixed percentages
 
 ## Parameter History
 
 | Date | Parameter | Old | New | Notes |
 |------|-----------|-----|-----|-------|
 | 2025-03-15 | Initial | - | period=16, factor=1.4 | WFA-optimized defaults from live MT5 bot |
+| 2026-03-15 | SL/TP | fixed % | ATR-based dynamic | Added sl_atr_mult=1.5, rr_ratio=3.0 matching live bot |
 
 ## Notes
 
-- The live bot also uses complex position management (partial TPs, trailing SL, breakeven) which is not part of this strategy module — VectorBT handles SL/TP via the runner.
+- The live bot also uses partial TPs, trailing SL, and breakeven — the backtest approximates this with ATR-based SL/TP via VBT's `from_signals()` stop support.
 - H1 filter uses shift(1) before forward-fill to avoid look-ahead bias (only acts on completed H1 candles).
 - Long-only for now. The live bot generates both BUY and SELL signals but only long is implemented here for consistency with other strategies.

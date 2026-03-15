@@ -18,10 +18,11 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - **MA Crossover** (`ma_crossover.py`): Fast/slow MA crossover with SMA/EMA choice
 - **RSI Reversal** (`rsi_reversal.py`): RSI oversold/overbought reversals
 - **Bollinger Breakout** (`bollinger_breakout.py`): Bollinger Bands upper/lower breakout
-- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter. Ported from live MT5 bot. Defaults: period=16, factor=1.4, source=hl2. See `docs/strategies/supertrend.md` for parameter history.
+- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter and ATR-based dynamic SL/TP. Ported from live MT5 bot. Defaults: period=16, factor=1.4, source=hl2, sl_atr_mult=1.5, rr_ratio=3.0. See `docs/strategies/supertrend.md` for parameter history.
 
 ## Key Patterns
 - Strategies return boolean pd.Series for entries/exits — VectorBT handles position management
+- Strategies can optionally override `compute_stops(df, **params)` to provide per-bar dynamic SL/TP (e.g., ATR-based) as fraction of entry price
 - Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call
 - Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage
 - Monte Carlo, regime analysis, and robustness testing are custom implementations (not in VBT open-source)

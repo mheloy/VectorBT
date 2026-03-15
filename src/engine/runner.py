@@ -34,6 +34,12 @@ def run_backtest(
 
     entries, exits = strategy.generate_signals(df, **effective_params)
 
+    # Use strategy-provided dynamic stops if no explicit SL/TP given
+    if sl_stop is None and tp_stop is None:
+        stops = strategy.compute_stops(df, **effective_params)
+        if stops is not None:
+            sl_stop, tp_stop = stops
+
     pf_kwargs = dict(
         close=df["close"],
         entries=entries,

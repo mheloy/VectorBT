@@ -51,6 +51,19 @@ class BaseStrategy(ABC):
         """
         ...
 
+    def compute_stops(
+        self, df: pd.DataFrame, **params
+    ) -> tuple[pd.Series, pd.Series] | None:
+        """Compute per-bar SL/TP as fraction of entry price.
+
+        Override in strategies that provide dynamic stop-loss and take-profit
+        (e.g., ATR-based stops). Returns None if the strategy uses fixed stops.
+
+        Returns:
+            Tuple of (sl_stop, tp_stop) as pd.Series of fractions, or None.
+        """
+        return None
+
     def default_params(self) -> dict[str, Any]:
         """Get default parameter values."""
         return {p.name: p.default for p in self.parameters()}

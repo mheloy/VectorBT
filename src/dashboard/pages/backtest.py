@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data.loader import load_m5, resample, TIMEFRAMES
+from src.strategies.base import BaseStrategy
 from src.strategies.registry import get_all_strategies
 from src.engine.runner import run_backtest
 from src.engine.metrics import extract_metrics, get_equity_curve, get_drawdown_series, get_trades_df
@@ -62,10 +63,24 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Risk Management")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0)
 fees = st.sidebar.number_input("Fees (fraction)", value=0.0001, step=0.0001, format="%.4f")
-use_sl = st.sidebar.checkbox("Stop Loss")
-sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5, disabled=not use_sl) / 100 if use_sl else None
-use_tp = st.sidebar.checkbox("Take Profit")
-tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5, disabled=not use_tp) / 100 if use_tp else None
+
+# Check if strategy provides dynamic ATR-based stops
+_has_dynamic_stops = type(strategy).compute_stops is not BaseStrategy.compute_stops
+
+if _has_dynamic_stops:
+    st.sidebar.info("SL/TP: ATR-based (see strategy params above)")
+    use_override = st.sidebar.checkbox("Override with fixed %")
+    if use_override:
+        sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5) / 100
+        tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5) / 100
+    else:
+        sl_stop = None
+        tp_stop = None
+else:
+    use_sl = st.sidebar.checkbox("Stop Loss")
+    sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5, disabled=not use_sl) / 100 if use_sl else None
+    use_tp = st.sidebar.checkbox("Take Profit")
+    tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5, disabled=not use_tp) / 100 if use_tp else None
 
 # --- Run ---
 if st.sidebar.button("Run Backtest", type="primary", use_container_width=True):

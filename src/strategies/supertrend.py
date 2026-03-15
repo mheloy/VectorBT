@@ -233,6 +233,14 @@ class SuperTrendStrategy(BaseStrategy):
                 "h1_factor", default=1.4, min_val=0.5, max_val=5.0, step=0.1,
                 description="H1 filter multiplier",
             ),
+            StrategyParam(
+                "sl_atr_mult", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
+                description="SL ATR multiplier",
+            ),
+            StrategyParam(
+                "rr_ratio", default=3.0, min_val=1.0, max_val=5.0, step=0.5,
+                description="Risk:Reward ratio",
+            ),
         ]
 
     def generate_signals(
@@ -244,6 +252,8 @@ class SuperTrendStrategy(BaseStrategy):
         h1_filter="On",
         h1_period=16,
         h1_factor=1.4,
+        sl_atr_mult=1.5,
+        rr_ratio=3.0,
     ) -> tuple[pd.Series, pd.Series]:
         st = calc_supertrend(df, int(period), float(factor), source)
         direction = st["direction"]
@@ -261,3 +271,38 @@ class SuperTrendStrategy(BaseStrategy):
         exits = exits.fillna(False).astype(bool)
 
         return entries, exits
+
+    def compute_stops(
+        self, df: pd.DataFrame, sl_atr_mult=1.5, rr_ratio=3.0, **params
+    ) -> tuple[pd.Series, pd.Series] | None:
+        """Compute per-bar SL/TP from ATR(14) on M15.
+
+        SL = ATR(14, M15) * sl_atr_mult, converted to fraction of close.
+        TP = SL * rr_ratio.
+        """
+        sl_atr_mult = float(sl_atr_mult)
+        rr_ratio = float(rr_ratio)
+
+        # Resample to M15 and compute ATR(14)
+        m15 = df.resample("15min").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}
+        ).dropna(subset=["open"])
+
+        if len(m15) < 15:
+            return None
+
+        atr_m15 = _atr(m15, period=14)
+        # Shift by 1 to avoid look-ahead (use completed M15 candle's ATR)
+        atr_m15 = atr_m15.shift(1)
+        # Forward-fill back to original timeframe
+        atr_aligned = atr_m15.reindex(df.index, method="ffill")
+
+        # Convert dollar-based ATR stop to fraction of close price
+        sl_pct = (atr_aligned * sl_atr_mult) / df["close"]
+        tp_pct = sl_pct * rr_ratio
+
+        # Fill NaN with conservative fallback (first few bars before ATR warms up)
+        sl_pct = sl_pct.fillna(sl_pct.dropna().iloc[0] if sl_pct.dropna().any() else 0.01)
+        tp_pct = tp_pct.fillna(tp_pct.dropna().iloc[0] if tp_pct.dropna().any() else 0.03)
+
+        return sl_pct, tp_pct

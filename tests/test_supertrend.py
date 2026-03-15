@@ -205,7 +205,7 @@ class TestSuperTrendStrategy:
 
     def test_parameters_count(self):
         params = self.strategy.parameters()
-        assert len(params) == 6
+        assert len(params) == 8
 
     def test_default_params(self):
         defaults = self.strategy.default_params()
@@ -247,3 +247,60 @@ class TestSuperTrendStrategy:
         entries, exits = self.strategy.generate_signals(df, h1_filter="Off")
         assert entries.sum() > 0
         assert exits.sum() > 0
+
+
+# ---------------------------------------------------------------------------
+# compute_stops tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStops:
+    def setup_method(self):
+        self.strategy = SuperTrendStrategy()
+
+    def test_returns_tuple_of_series(self):
+        df = make_ohlcv(n=500, freq="5min")
+        result = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=3.0)
+        assert result is not None
+        sl_pct, tp_pct = result
+        assert isinstance(sl_pct, pd.Series)
+        assert isinstance(tp_pct, pd.Series)
+        assert len(sl_pct) == len(df)
+        assert len(tp_pct) == len(df)
+
+    def test_no_nan(self):
+        df = make_ohlcv(n=500, freq="5min")
+        sl_pct, tp_pct = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=3.0)
+        assert not sl_pct.isna().any()
+        assert not tp_pct.isna().any()
+
+    def test_sl_positive_and_reasonable(self):
+        df = make_ohlcv(n=500, freq="5min", base=2650.0)
+        sl_pct, tp_pct = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=3.0)
+        valid = sl_pct.dropna()
+        assert (valid > 0).all()
+        assert (valid < 0.05).all()  # SL should be < 5% for gold
+
+    def test_tp_equals_sl_times_rr(self):
+        df = make_ohlcv(n=500, freq="5min")
+        rr = 2.5
+        sl_pct, tp_pct = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=rr)
+        np.testing.assert_allclose(tp_pct.values, sl_pct.values * rr, rtol=1e-10)
+
+    def test_higher_mult_gives_wider_sl(self):
+        df = make_ohlcv(n=500, freq="5min")
+        sl_low, _ = self.strategy.compute_stops(df, sl_atr_mult=1.0, rr_ratio=3.0)
+        sl_high, _ = self.strategy.compute_stops(df, sl_atr_mult=2.0, rr_ratio=3.0)
+        # Higher multiplier should give wider (larger) SL percentages
+        assert sl_high.mean() > sl_low.mean()
+
+    def test_base_strategy_returns_none(self):
+        from src.strategies.ma_crossover import MACrossover
+        ma = MACrossover()
+        df = make_ohlcv(n=100)
+        assert ma.compute_stops(df) is None
+
+    def test_insufficient_data_returns_none(self):
+        df = make_ohlcv(n=10, freq="5min")
+        result = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=3.0)
+        assert result is None
