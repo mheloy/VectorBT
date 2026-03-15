@@ -160,17 +160,31 @@ if st.sidebar.button("Run Optimization", type="primary", use_container_width=Tru
 
     freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 
-    with st.spinner(f"Optimizing {n_combos} combinations..."):
-        df = resample(raw_data, timeframe)
-        result = optimize(
-            strategy=strategy,
-            df=df,
-            sweep_params=sweep_params,
-            metric=target_metric,
-            init_cash=init_cash,
-            fees=fees,
-            freq=freq_map.get(timeframe),
-        )
+    progress_bar = st.progress(0, text="Preparing optimization...")
+    status_text = st.empty()
+
+    def on_progress(current, total, phase):
+        pct = current / total
+        if phase == "signals":
+            progress_bar.progress(pct * 0.7, text=f"Generating signals: {current}/{total} combos")
+        else:
+            progress_bar.progress(0.7 + pct * 0.3, text=f"Extracting metrics: {current}/{total}")
+
+    df = resample(raw_data, timeframe)
+    result = optimize(
+        strategy=strategy,
+        df=df,
+        sweep_params=sweep_params,
+        metric=target_metric,
+        init_cash=init_cash,
+        fees=fees,
+        freq=freq_map.get(timeframe),
+        progress_cb=on_progress,
+    )
+    progress_bar.progress(1.0, text="Done!")
+    import time; time.sleep(0.5)
+    progress_bar.empty()
+    status_text.empty()
 
     st.session_state["opt_result"] = result
 

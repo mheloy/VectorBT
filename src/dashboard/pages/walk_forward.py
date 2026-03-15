@@ -54,14 +54,25 @@ fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f",
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 
 if st.sidebar.button("Run Walk-Forward", type="primary", use_container_width=True):
-    with st.spinner(f"Running walk-forward with {n_windows} windows..."):
-        df = resample(raw_data, timeframe)
-        result = run_walk_forward(
-            strategy=strategy, df=df, sweep_params=sweep_params,
-            n_windows=n_windows, anchored=anchored, min_trades=min_trades,
-            metric=metric, init_cash=init_cash, fees=fees,
-            freq=freq_map.get(timeframe),
-        )
+    progress_bar = st.progress(0, text="Preparing walk-forward...")
+
+    def on_wf_progress(current, total, phase):
+        if phase == "window":
+            progress_bar.progress(current / (total + 1), text=f"Window {current}/{total}: optimizing IS → testing OOS")
+        elif phase == "full_sample":
+            progress_bar.progress(total / (total + 1), text="Running full-sample optimization...")
+
+    df = resample(raw_data, timeframe)
+    result = run_walk_forward(
+        strategy=strategy, df=df, sweep_params=sweep_params,
+        n_windows=n_windows, anchored=anchored, min_trades=min_trades,
+        metric=metric, init_cash=init_cash, fees=fees,
+        freq=freq_map.get(timeframe),
+        progress_cb=on_wf_progress,
+    )
+    progress_bar.progress(1.0, text="Done!")
+    import time; time.sleep(0.5)
+    progress_bar.empty()
     st.session_state["wf_result"] = result
 
 if "wf_result" in st.session_state:

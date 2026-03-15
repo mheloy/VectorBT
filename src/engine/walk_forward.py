@@ -56,6 +56,7 @@ def run_walk_forward(
     init_cash: float = 10_000.0,
     fees: float = 0.0001,
     freq: str | None = None,
+    progress_cb=None,
 ) -> WalkForwardResult:
     """Run walk-forward optimization with full OOS data coverage.
 
@@ -121,6 +122,9 @@ def run_walk_forward(
     for i, ((is_s, is_e), (oos_s, oos_e)) in enumerate(splits):
         is_df = df.iloc[is_s:is_e]
         oos_df = df.iloc[oos_s:oos_e]
+
+        if progress_cb is not None:
+            progress_cb(i + 1, len(splits), "window")
 
         if len(oos_df) < 5:
             continue
@@ -209,6 +213,8 @@ def run_walk_forward(
     oos_equity_curve = pd.concat(oos_equities) if oos_equities else pd.Series(dtype=float)
 
     # Full-sample single optimization for comparison
+    if progress_cb is not None:
+        progress_cb(len(splits), len(splits), "full_sample")
     full_opt = optimize(strategy, df, sweep_params, metric, init_cash, fees, freq)
     # Apply min_trades filter to full optimization too
     full_filtered = full_opt.results_df[full_opt.results_df["total_trades"] >= min_trades]

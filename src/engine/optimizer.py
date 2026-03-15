@@ -36,6 +36,7 @@ def optimize(
     freq: str | None = None,
     sl_stop: float | None = None,
     tp_stop: float | None = None,
+    progress_cb=None,
 ) -> OptimizationResult:
     """Run grid search over parameter combinations using VectorBT's vectorized engine.
 
@@ -53,6 +54,7 @@ def optimize(
         freq: Data frequency string.
         sl_stop: Stop-loss fraction.
         tp_stop: Take-profit fraction.
+        progress_cb: Optional callback(current, total, phase) for progress updates.
     """
     param_names = list(sweep_params.keys())
     param_values = list(sweep_params.values())
@@ -74,6 +76,8 @@ def optimize(
         all_entries[label] = entries.values
         all_exits[label] = exits.values
         combo_labels.append(label)
+        if progress_cb is not None:
+            progress_cb(i + 1, len(combinations), "signals")
 
     # Build multi-column DataFrames — each column is one param combo
     if len(param_names) == 1:
