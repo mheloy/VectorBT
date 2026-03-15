@@ -1,0 +1,21 @@
+[project]
+name = "vectorbacktest"
+version = "0.1.0"
+description = "VectorBT-based backtest engine for XAUUSD"
+requires-python = ">=3.10"
+dependencies = [
+    "vectorbt",
+    "pandas",
+    "numpy",
+    "scipy",
+    "hmmlearn",
+    "scikit-learn",
+    "streamlit",
+    "plotly",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
