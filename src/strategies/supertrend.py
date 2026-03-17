@@ -326,51 +326,78 @@ class SuperTrendStrategy(BaseStrategy):
     def compute_sl_distances(
         self, df: pd.DataFrame, sl_atr_mult=1.5, **params
     ) -> pd.Series:
-        """Compute per-bar SL distance in dollars (1R = ATR(14,M15) * sl_atr_mult).
+        """Compute per-bar SL distance in dollars (1R = ATR(14) * sl_atr_mult).
 
-        Used by the custom simulator for position management.
+        Uses M15 ATR when data is finer than M15 (e.g., 5M).
+        Uses the data's own timeframe ATR when data is M15 or coarser (e.g., 1H, 4H).
         """
         sl_atr_mult = float(sl_atr_mult)
 
-        m15 = df.resample("15min").agg(
-            {"open": "first", "high": "max", "low": "min", "close": "last"}
-        ).dropna(subset=["open"])
+        # Detect data frequency to decide whether to resample
+        if len(df) >= 2:
+            median_gap = (df.index[1:] - df.index[:-1]).median()
+            data_minutes = median_gap.total_seconds() / 60
+        else:
+            data_minutes = 5  # default
 
-        if len(m15) < 15:
-            return pd.Series(0.0, index=df.index)
+        if data_minutes < 15:
+            # Data is finer than M15 — resample to M15 for ATR
+            atr_df = df.resample("15min").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}
+            ).dropna(subset=["open"])
+        else:
+            # Data is M15 or coarser — use as-is
+            atr_df = df
 
-        atr_m15 = _atr(m15, period=14)
-        atr_m15 = atr_m15.shift(1)
-        atr_aligned = atr_m15.reindex(df.index, method="ffill")
+        if len(atr_df) < 15:
+            # Not enough data — use a reasonable fallback
+            return pd.Series(10.0, index=df.index)
+
+        atr_series = _atr(atr_df, period=14)
+        # Shift by 1 to avoid look-ahead bias (use completed candle's ATR)
+        atr_series = atr_series.shift(1)
+        # Align back to original index
+        atr_aligned = atr_series.reindex(df.index, method="ffill")
 
         sl_dollars = atr_aligned * sl_atr_mult
-        sl_dollars = sl_dollars.fillna(sl_dollars.dropna().iloc[0] if sl_dollars.dropna().any() else 10.0)
+        # Fill NaN warmup period with first valid value
+        first_valid = sl_dollars.dropna()
+        fallback = float(first_valid.iloc[0]) if len(first_valid) > 0 else 10.0
+        sl_dollars = sl_dollars.fillna(fallback)
         return sl_dollars
 
     def compute_stops(
         self, df: pd.DataFrame, sl_atr_mult=1.5, rr_ratio=3.0, **params
     ) -> tuple[pd.Series, pd.Series] | None:
-        """Compute per-bar SL/TP from ATR(14) on M15.
+        """Compute per-bar SL/TP from ATR(14).
 
-        SL = ATR(14, M15) * sl_atr_mult, converted to fraction of close.
+        Uses M15 ATR when data is finer than M15, otherwise uses data's own timeframe.
+        SL = ATR(14) * sl_atr_mult, converted to fraction of close.
         TP = SL * rr_ratio.
         """
         sl_atr_mult = float(sl_atr_mult)
         rr_ratio = float(rr_ratio)
 
-        # Resample to M15 and compute ATR(14)
-        m15 = df.resample("15min").agg(
-            {"open": "first", "high": "max", "low": "min", "close": "last"}
-        ).dropna(subset=["open"])
+        # Detect data frequency
+        if len(df) >= 2:
+            median_gap = (df.index[1:] - df.index[:-1]).median()
+            data_minutes = median_gap.total_seconds() / 60
+        else:
+            data_minutes = 5
 
-        if len(m15) < 15:
+        if data_minutes < 15:
+            atr_df = df.resample("15min").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}
+            ).dropna(subset=["open"])
+        else:
+            atr_df = df
+
+        if len(atr_df) < 15:
             return None
 
-        atr_m15 = _atr(m15, period=14)
-        # Shift by 1 to avoid look-ahead (use completed M15 candle's ATR)
-        atr_m15 = atr_m15.shift(1)
-        # Forward-fill back to original timeframe
-        atr_aligned = atr_m15.reindex(df.index, method="ffill")
+        atr_series = _atr(atr_df, period=14)
+        atr_series = atr_series.shift(1)
+        atr_aligned = atr_series.reindex(df.index, method="ffill")
 
         # Convert dollar-based ATR stop to fraction of close price
         sl_pct = (atr_aligned * sl_atr_mult) / df["close"]
