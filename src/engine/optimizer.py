@@ -230,6 +230,7 @@ def _optimize_with_pm(
         equity_arr, trade_records, n_trades = simulate(
             df=df, entries=entries, exits=exits, sl_distances=sl_distances,
             config=pm_config, init_cash=init_cash, fees=fees,
+            risk_pct=pm_config.risk_pct, max_lot_value=pm_config.max_lot_value,
         )
 
         sim_result = build_simulation_result(

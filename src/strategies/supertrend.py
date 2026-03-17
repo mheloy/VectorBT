@@ -268,6 +268,10 @@ class SuperTrendStrategy(BaseStrategy):
                 "final_tp_r", default=3.0, min_val=1.5, max_val=10.0, step=0.5,
                 description="Final TP R-multiple (runner)",
             ),
+            StrategyParam(
+                "risk_pct", default=0.03, min_val=0.005, max_val=0.10, step=0.005,
+                description="Risk % per trade",
+            ),
         ]
 
     def generate_signals(
@@ -300,7 +304,7 @@ class SuperTrendStrategy(BaseStrategy):
 
     def position_management(self, adv_pm="Off", tp1_r=1.5, tp1_pct=0.50,
                             tp2_r=2.9, tp2_pct=0.30, be_trigger_r=1.0,
-                            final_tp_r=3.0, **params):
+                            final_tp_r=3.0, risk_pct=0.03, **params):
         """Return advanced PM config when enabled."""
         if str(adv_pm) != "On":
             return None
@@ -321,6 +325,7 @@ class SuperTrendStrategy(BaseStrategy):
             ],
             trailing_sl_enabled=True,
             final_tp_r=float(final_tp_r),
+            risk_pct=float(risk_pct),
         )
 
     def compute_sl_distances(

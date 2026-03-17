@@ -53,3 +53,7 @@ class PositionManagementConfig:
 
     # Final take profit for the runner portion
     final_tp_r: float = 3.0
+
+    # Position sizing
+    risk_pct: float = 0.03  # Risk 3% of equity per trade
+    max_lot_value: float = 0.0  # Max notional per trade in $ (0 = no limit)

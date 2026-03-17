@@ -72,6 +72,8 @@ def _simulate_core(
     fees,
     init_cash,
     ignore_signal_exits,
+    risk_pct,       # % of equity to risk per trade (e.g., 0.03 = 3%)
+    max_lot_value,  # Max notional per trade in $ (0 = no limit)
 ):
     """Core Numba-JIT simulation loop.
 
@@ -87,7 +89,9 @@ def _simulate_core(
     trades = np.empty((max_trades, TR_COLS), dtype=np.float64)
     n_trades = 0
 
-    # Portfolio state
+    # Portfolio state — leveraged model
+    # cash = account balance; num_units = position size (e.g., oz of gold)
+    # PnL is added/subtracted from cash directly (no capital "allocated")
     cash = init_cash
     in_position = False
     direction = 0  # 1 = long, -1 = short (only long for now)
@@ -95,11 +99,11 @@ def _simulate_core(
     # Position state
     entry_price = 0.0
     entry_bar = 0
-    position_fraction = 0.0  # Fraction of initial position still open
+    position_fraction = 0.0  # Fraction of initial position still open (1.0 at entry)
+    initial_units = 0.0      # Total units at entry (e.g., oz of gold)
     sl_price = 0.0
     initial_sl_distance = 0.0
     tp_price = 0.0  # Final TP price
-    allocated_capital = 0.0  # Capital allocated to this trade at entry
 
     # PM state
     partial_done = np.zeros(10, dtype=np.bool_)  # Up to 10 partial TPs
@@ -109,9 +113,8 @@ def _simulate_core(
     for i in range(n_bars):
         if in_position:
             # --- Check exits (conservative order: SL first) ---
-
-            # Current unrealized distance from entry (for long)
-            # Use high/low to check intra-bar triggers
+            # PnL = (exit - entry) * direction * units_closed
+            # units_closed = initial_units * fraction_closed
 
             # 1. SL check (worst case first)
             sl_hit = False
@@ -121,13 +124,12 @@ def _simulate_core(
                 sl_hit = high_arr[i] >= sl_price
 
             if sl_hit:
-                # Close remaining at SL price
                 exit_price = sl_price
-                pnl_per_unit = (exit_price - entry_price) * direction
-                trade_pnl = pnl_per_unit * position_fraction * allocated_capital / entry_price
-                fee_cost = abs(position_fraction * allocated_capital) * fees
+                units_closed = initial_units * position_fraction
+                trade_pnl = (exit_price - entry_price) * direction * units_closed
+                fee_cost = units_closed * exit_price * fees
                 trade_pnl -= fee_cost
-                cash += allocated_capital * position_fraction + trade_pnl
+                cash += trade_pnl
 
                 # Determine exit type
                 if be_done and not trailing_sl_enabled:
@@ -139,7 +141,6 @@ def _simulate_core(
                 else:
                     exit_type = EXIT_INITIAL_SL
 
-                # Record trade
                 if n_trades < max_trades:
                     trades[n_trades, TR_ENTRY_BAR] = entry_bar
                     trades[n_trades, TR_EXIT_BAR] = i
@@ -153,7 +154,7 @@ def _simulate_core(
 
                 in_position = False
                 position_fraction = 0.0
-                allocated_capital = 0.0
+                initial_units = 0.0
 
                 equity[i] = cash
                 continue
@@ -172,21 +173,18 @@ def _simulate_core(
                         triggered = low_arr[i] <= trigger_price
 
                     if triggered:
-                        # Close this partial
                         exit_price = trigger_price
                         close_frac = pt_pcts[p]
-                        # Don't close more than remaining
                         if close_frac > position_fraction:
                             close_frac = position_fraction
 
-                        pnl_per_unit = (exit_price - entry_price) * direction
-                        trade_pnl = pnl_per_unit * close_frac * allocated_capital / entry_price
-                        fee_cost = abs(close_frac * allocated_capital) * fees
+                        units_closed = initial_units * close_frac
+                        trade_pnl = (exit_price - entry_price) * direction * units_closed
+                        fee_cost = units_closed * exit_price * fees
                         trade_pnl -= fee_cost
-                        cash += allocated_capital * close_frac + trade_pnl
+                        cash += trade_pnl
 
-                        # Record partial close
-                        exit_type = EXIT_TP1 + p  # TP1=1, TP2=2, etc.
+                        exit_type = EXIT_TP1 + p
                         if n_trades < max_trades:
                             trades[n_trades, TR_ENTRY_BAR] = entry_bar
                             trades[n_trades, TR_EXIT_BAR] = i
@@ -213,10 +211,9 @@ def _simulate_core(
                                     sl_price = new_sl
                             be_done = True
 
-                        # If fully closed by partials
                         if position_fraction <= 1e-9:
                             in_position = False
-                            allocated_capital = 0.0
+                            initial_units = 0.0
                             break
 
             if not in_position:
@@ -290,11 +287,11 @@ def _simulate_core(
 
                 if final_tp_hit:
                     exit_price = final_tp_price
-                    pnl_per_unit = (exit_price - entry_price) * direction
-                    trade_pnl = pnl_per_unit * position_fraction * allocated_capital / entry_price
-                    fee_cost = abs(position_fraction * allocated_capital) * fees
+                    units_closed = initial_units * position_fraction
+                    trade_pnl = (exit_price - entry_price) * direction * units_closed
+                    fee_cost = units_closed * exit_price * fees
                     trade_pnl -= fee_cost
-                    cash += allocated_capital * position_fraction + trade_pnl
+                    cash += trade_pnl
 
                     if n_trades < max_trades:
                         trades[n_trades, TR_ENTRY_BAR] = entry_bar
@@ -309,7 +306,7 @@ def _simulate_core(
 
                     in_position = False
                     position_fraction = 0.0
-                    allocated_capital = 0.0
+                    initial_units = 0.0
 
                     equity[i] = cash
                     continue
@@ -317,11 +314,11 @@ def _simulate_core(
             # 6. Signal exit check (skipped when PM manages all exits)
             if exits_arr[i] and not ignore_signal_exits:
                 exit_price = close_arr[i]
-                pnl_per_unit = (exit_price - entry_price) * direction
-                trade_pnl = pnl_per_unit * position_fraction * allocated_capital / entry_price
-                fee_cost = abs(position_fraction * allocated_capital) * fees
+                units_closed = initial_units * position_fraction
+                trade_pnl = (exit_price - entry_price) * direction * units_closed
+                fee_cost = units_closed * exit_price * fees
                 trade_pnl -= fee_cost
-                cash += allocated_capital * position_fraction + trade_pnl
+                cash += trade_pnl
 
                 if n_trades < max_trades:
                     trades[n_trades, TR_ENTRY_BAR] = entry_bar
@@ -336,15 +333,14 @@ def _simulate_core(
 
                 in_position = False
                 position_fraction = 0.0
-                allocated_capital = 0.0
+                initial_units = 0.0
 
                 equity[i] = cash
                 continue
 
             # Mark-to-market for open position
-            unrealized = (close_arr[i] - entry_price) * direction
-            unrealized_pnl = unrealized * position_fraction * allocated_capital / entry_price
-            equity[i] = cash + allocated_capital * position_fraction + unrealized_pnl
+            unrealized_pnl = (close_arr[i] - entry_price) * direction * initial_units * position_fraction
+            equity[i] = cash + unrealized_pnl
 
         else:
             # Not in position — check for entry
@@ -359,11 +355,22 @@ def _simulate_core(
                     sl_price = entry_price - sl_dist  # Long: SL below
                     tp_price = entry_price + sl_dist * final_tp_r
 
-                    # Allocate capital (full available cash)
-                    allocated_capital = cash
-                    fee_cost = allocated_capital * fees
-                    cash = 0.0
-                    allocated_capital -= fee_cost  # Entry fee
+                    # Risk-based position sizing (leveraged)
+                    # num_units = how many oz of gold to buy
+                    # At SL, loss = sl_dist * num_units = risk_pct * equity
+                    # So: num_units = (equity * risk_pct) / sl_dist
+                    current_equity = cash
+                    initial_units = (current_equity * risk_pct) / sl_dist
+
+                    # Cap at max lot (1 lot = 100 oz for gold)
+                    if max_lot_value > 0:
+                        max_units = max_lot_value / entry_price
+                        if initial_units > max_units:
+                            initial_units = max_units
+
+                    # Entry fee based on notional
+                    fee_cost = initial_units * entry_price * fees
+                    cash -= fee_cost
 
                     in_position = True
                     be_done = False
@@ -374,18 +381,17 @@ def _simulate_core(
             equity[i] = cash
             if in_position:
                 # First bar mark-to-market
-                unrealized = (close_arr[i] - entry_price) * direction
-                unrealized_pnl = unrealized * position_fraction * allocated_capital / entry_price
-                equity[i] = cash + allocated_capital * position_fraction + unrealized_pnl
+                unrealized_pnl = (close_arr[i] - entry_price) * direction * initial_units * position_fraction
+                equity[i] = cash + unrealized_pnl
 
     # Close any remaining position at last bar
     if in_position:
         exit_price = close_arr[n_bars - 1]
-        pnl_per_unit = (exit_price - entry_price) * direction
-        trade_pnl = pnl_per_unit * position_fraction * allocated_capital / entry_price
-        fee_cost = abs(position_fraction * allocated_capital) * fees
+        units_closed = initial_units * position_fraction
+        trade_pnl = (exit_price - entry_price) * direction * units_closed
+        fee_cost = units_closed * exit_price * fees
         trade_pnl -= fee_cost
-        cash += allocated_capital * position_fraction + trade_pnl
+        cash += trade_pnl
 
         if n_trades < max_trades:
             trades[n_trades, TR_ENTRY_BAR] = entry_bar
@@ -411,6 +417,8 @@ def simulate(
     config: PositionManagementConfig,
     init_cash: float = 10_000.0,
     fees: float = 0.0001,
+    risk_pct: float = 0.03,
+    max_lot_value: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Run the advanced position management simulation.
 
@@ -466,6 +474,8 @@ def simulate(
         fees=fees,
         init_cash=init_cash,
         ignore_signal_exits=True,  # PM handles all exits; don't close on signal flip
+        risk_pct=risk_pct,
+        max_lot_value=max_lot_value,
     )
 
     return equity, trades[:n_trades], n_trades

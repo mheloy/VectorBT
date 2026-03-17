@@ -54,6 +54,8 @@ def run_backtest(
             config=pm_config,
             init_cash=init_cash,
             fees=fees,
+            risk_pct=pm_config.risk_pct,
+            max_lot_value=pm_config.max_lot_value,
         )
 
         sim_result = build_simulation_result(
