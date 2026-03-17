@@ -10,6 +10,11 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseStrategy, StrategyParam
+from src.engine.position_management import (
+    PartialTPConfig,
+    PositionManagementConfig,
+    TrailingStageConfig,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +238,36 @@ class SuperTrendStrategy(BaseStrategy):
                 "rr_ratio", default=3.0, min_val=1.0, max_val=5.0, step=0.5,
                 description="Risk:Reward ratio",
             ),
+            # Position management params
+            StrategyParam(
+                "adv_pm", default="Off",
+                choices=["On", "Off"],
+                description="Advanced position management (partial TP, BE, trailing)",
+            ),
+            StrategyParam(
+                "tp1_r", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
+                description="Partial TP1 R-multiple",
+            ),
+            StrategyParam(
+                "tp1_pct", default=0.50, min_val=0.1, max_val=0.9, step=0.05,
+                description="TP1 close fraction",
+            ),
+            StrategyParam(
+                "tp2_r", default=2.9, min_val=1.0, max_val=8.0, step=0.1,
+                description="Partial TP2 R-multiple",
+            ),
+            StrategyParam(
+                "tp2_pct", default=0.30, min_val=0.1, max_val=0.5, step=0.05,
+                description="TP2 close fraction",
+            ),
+            StrategyParam(
+                "be_trigger_r", default=1.0, min_val=0.3, max_val=3.0, step=0.1,
+                description="Break-even trigger R-multiple",
+            ),
+            StrategyParam(
+                "final_tp_r", default=3.0, min_val=1.5, max_val=10.0, step=0.5,
+                description="Final TP R-multiple (runner)",
+            ),
         ]
 
     def generate_signals(
@@ -261,6 +296,55 @@ class SuperTrendStrategy(BaseStrategy):
         exits = exits.fillna(False).astype(bool)
 
         return entries, exits
+
+    def position_management(self, adv_pm="Off", tp1_r=1.5, tp1_pct=0.50,
+                            tp2_r=2.9, tp2_pct=0.30, be_trigger_r=1.0,
+                            final_tp_r=3.0, **params):
+        """Return advanced PM config when enabled."""
+        if str(adv_pm) != "On":
+            return None
+
+        return PositionManagementConfig(
+            partial_tps=[
+                PartialTPConfig(trigger_r=float(tp1_r), close_pct=float(tp1_pct)),
+                PartialTPConfig(trigger_r=float(tp2_r), close_pct=float(tp2_pct)),
+            ],
+            partial_tp_enabled=True,
+            be_enabled=True,
+            be_trigger_r=float(be_trigger_r),
+            be_offset_dollars=1.0,
+            trailing_stages=[
+                TrailingStageConfig(trigger_r=0.67, sl_multiplier=1.0),
+                TrailingStageConfig(trigger_r=1.0, sl_multiplier=0.8),
+                TrailingStageConfig(trigger_r=1.33, sl_multiplier=0.6),
+            ],
+            trailing_sl_enabled=True,
+            final_tp_r=float(final_tp_r),
+        )
+
+    def compute_sl_distances(
+        self, df: pd.DataFrame, sl_atr_mult=1.5, **params
+    ) -> pd.Series:
+        """Compute per-bar SL distance in dollars (1R = ATR(14,M15) * sl_atr_mult).
+
+        Used by the custom simulator for position management.
+        """
+        sl_atr_mult = float(sl_atr_mult)
+
+        m15 = df.resample("15min").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last"}
+        ).dropna(subset=["open"])
+
+        if len(m15) < 15:
+            return pd.Series(0.0, index=df.index)
+
+        atr_m15 = _atr(m15, period=14)
+        atr_m15 = atr_m15.shift(1)
+        atr_aligned = atr_m15.reindex(df.index, method="ffill")
+
+        sl_dollars = atr_aligned * sl_atr_mult
+        sl_dollars = sl_dollars.fillna(sl_dollars.dropna().iloc[0] if sl_dollars.dropna().any() else 10.0)
+        return sl_dollars
 
     def compute_stops(
         self, df: pd.DataFrame, sl_atr_mult=1.5, rr_ratio=3.0, **params

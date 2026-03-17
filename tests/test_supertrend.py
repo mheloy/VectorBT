@@ -205,7 +205,7 @@ class TestSuperTrendStrategy:
 
     def test_parameters_count(self):
         params = self.strategy.parameters()
-        assert len(params) == 6
+        assert len(params) == 13  # 6 core + 7 position management
 
     def test_default_params(self):
         defaults = self.strategy.default_params()

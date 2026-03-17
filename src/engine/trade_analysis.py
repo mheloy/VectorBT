@@ -30,19 +30,26 @@ class TradeAnalysisResult:
 
 
 def analyze_trades(
-    portfolio: vbt.Portfolio,
+    result,
     df: pd.DataFrame,
     risk_unit: float | None = None,
 ) -> TradeAnalysisResult:
     """Run comprehensive trade analysis.
 
     Args:
-        portfolio: VectorBT Portfolio from backtest.
+        result: BacktestResult or VectorBT Portfolio from backtest.
         df: OHLCV DataFrame used in backtest.
         risk_unit: Dollar risk per trade for R-multiple calc.
             If None, uses ATR(14) * close as fallback.
     """
-    trades = portfolio.trades.records_readable
+    from src.engine.sim_result import BacktestResult
+    if isinstance(result, BacktestResult):
+        trades = result.trades_df
+        portfolio = result.portfolio  # May be None for simulator path
+    else:
+        portfolio = result
+        trades = portfolio.trades.records_readable
+
     if trades.empty:
         return _empty_result()
 
@@ -67,7 +74,7 @@ def analyze_trades(
         }
 
     # --- MAE/MFE ---
-    mae_mfe_df = _calc_mae_mfe(portfolio, df)
+    mae_mfe_df = _calc_mae_mfe(trades, df)
 
     # --- Streaks ---
     streaks_df, max_win, max_loss = _calc_streaks(trades)
@@ -86,10 +93,27 @@ def analyze_trades(
         })
 
     # --- Exposure ---
-    positions = portfolio.asset_value()
-    in_market = (positions.abs() > 0).mean() * 100
-    long_time = (positions > 0).mean() * 100
-    short_time = (positions < 0).mean() * 100
+    if portfolio is not None:
+        positions = portfolio.asset_value()
+        in_market = (positions.abs() > 0).mean() * 100
+        long_time = (positions > 0).mean() * 100
+        short_time = (positions < 0).mean() * 100
+    else:
+        # Estimate from trade timestamps for simulator path
+        in_market = 0.0
+        long_time = 0.0
+        short_time = 0.0
+        if "Entry Timestamp" in trades.columns and "Exit Timestamp" in trades.columns:
+            total_bars = len(df)
+            in_trade_bars = 0
+            for _, t in trades.iterrows():
+                entry = t["Entry Timestamp"]
+                exit_ = t["Exit Timestamp"]
+                mask = (df.index >= entry) & (df.index <= exit_)
+                in_trade_bars += mask.sum()
+            in_market = in_trade_bars / total_bars * 100 if total_bars > 0 else 0
+            long_time = in_market  # All long for now
+            short_time = 0.0
 
     return TradeAnalysisResult(
         r_multiples=r_multiples,
@@ -118,9 +142,8 @@ def _calc_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return tr.rolling(period).mean().dropna()
 
 
-def _calc_mae_mfe(portfolio: vbt.Portfolio, df: pd.DataFrame) -> pd.DataFrame | None:
+def _calc_mae_mfe(trades: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame | None:
     """Calculate Maximum Adverse/Favorable Excursion per trade."""
-    trades = portfolio.trades.records_readable
     if trades.empty:
         return None
 

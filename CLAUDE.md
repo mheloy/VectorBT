@@ -18,12 +18,14 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - **MA Crossover** (`ma_crossover.py`): Fast/slow MA crossover with SMA/EMA choice
 - **RSI Reversal** (`rsi_reversal.py`): RSI oversold/overbought reversals
 - **Bollinger Breakout** (`bollinger_breakout.py`): Bollinger Bands upper/lower breakout
-- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter and ATR-based dynamic SL/TP. Ported from live MT5 bot. Defaults: period=16, factor=1.4, source=hl2, sl_atr_mult=1.5, rr_ratio=3.0. See `docs/strategies/supertrend.md` for parameter history.
+- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter and ATR-based dynamic SL/TP. Ported from live MT5 bot. Supports advanced position management (partial TP, break-even, trailing SL) via custom Numba simulator. Defaults: period=16, factor=1.4, source=hl2, sl_atr_mult=1.5, rr_ratio=3.0. See `docs/strategies/supertrend.md` for parameter history.
 
 ## Key Patterns
 - Strategies return boolean pd.Series for entries/exits — VectorBT handles position management
 - Strategies can optionally override `compute_stops(df, **params)` to provide per-bar dynamic SL/TP (e.g., ATR-based) as fraction of entry price
-- Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call
+- Strategies can optionally override `position_management(**params)` to enable advanced PM (partial TP, break-even, trailing SL) — routes to custom Numba simulator instead of VBT
+- **Dual-path runner**: `run_backtest()` returns `BacktestResult` which wraps either VBT Portfolio (simple strategies) or `SimulationResult` (PM strategies) with a unified interface
+- Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call (or per-combo simulation for PM strategies)
 - Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage
 - Monte Carlo, regime analysis, and robustness testing are custom implementations (not in VBT open-source)
 - `StrategyParam` dataclass drives both dashboard sliders and optimizer grid ranges

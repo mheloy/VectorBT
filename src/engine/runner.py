@@ -1,9 +1,11 @@
-"""Backtest runner: bridges strategies to VectorBT Portfolio."""
+"""Backtest runner: bridges strategies to VectorBT Portfolio or custom simulator."""
 
 import vectorbt as vbt
 import pandas as pd
 
 from src.strategies.base import BaseStrategy
+from src.engine.sim_result import BacktestResult, build_simulation_result
+from src.engine.simulator import simulate
 
 
 def run_backtest(
@@ -15,8 +17,11 @@ def run_backtest(
     sl_stop: float | None = None,
     tp_stop: float | None = None,
     freq: str | None = None,
-) -> vbt.Portfolio:
-    """Run a single backtest and return a VectorBT Portfolio.
+) -> BacktestResult:
+    """Run a single backtest and return a BacktestResult.
+
+    Automatically routes to the custom simulator if the strategy provides
+    a position management config, otherwise uses VBT's from_signals().
 
     Args:
         strategy: Strategy instance to generate signals.
@@ -34,7 +39,34 @@ def run_backtest(
 
     entries, exits = strategy.generate_signals(df, **effective_params)
 
-    # Use strategy-provided dynamic stops if no explicit SL/TP given
+    # Check if strategy wants advanced position management
+    pm_config = strategy.position_management(**effective_params)
+
+    if pm_config is not None:
+        # Custom simulator path
+        sl_distances = strategy.compute_sl_distances(df, **effective_params)
+
+        equity_arr, trade_records, n_trades = simulate(
+            df=df,
+            entries=entries,
+            exits=exits,
+            sl_distances=sl_distances,
+            config=pm_config,
+            init_cash=init_cash,
+            fees=fees,
+        )
+
+        sim_result = build_simulation_result(
+            equity_arr=equity_arr,
+            trade_records=trade_records,
+            n_trades=n_trades,
+            index=df.index,
+            init_cash=init_cash,
+            fees=fees,
+        )
+        return BacktestResult(sim_result=sim_result)
+
+    # VBT path (existing behavior)
     if sl_stop is None and tp_stop is None:
         stops = strategy.compute_stops(df, **effective_params)
         if stops is not None:
@@ -56,4 +88,4 @@ def run_backtest(
         pf_kwargs["tp_stop"] = tp_stop
 
     portfolio = vbt.Portfolio.from_signals(**pf_kwargs)
-    return portfolio
+    return BacktestResult(portfolio=portfolio)

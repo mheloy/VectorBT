@@ -64,6 +64,14 @@ class BaseStrategy(ABC):
         """
         return None
 
+    def position_management(self, **params):
+        """Return advanced position management config, or None for simple SL/TP.
+
+        Override in strategies that need partial TPs, break-even, or trailing SL.
+        Returns a PositionManagementConfig or None.
+        """
+        return None
+
     def default_params(self) -> dict[str, Any]:
         """Get default parameter values."""
         return {p.name: p.default for p in self.parameters()}

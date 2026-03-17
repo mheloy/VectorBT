@@ -2,6 +2,7 @@
 
 Uses VectorBT's ability to accept multi-column DataFrames in Portfolio.from_signals(),
 running all parameter combinations in a single vectorized call.
+For strategies with advanced position management, falls back to per-combo simulation.
 """
 
 import itertools
@@ -12,6 +13,8 @@ import pandas as pd
 import vectorbt as vbt
 
 from src.strategies.base import BaseStrategy, StrategyParam
+from src.engine.simulator import simulate
+from src.engine.sim_result import build_simulation_result
 
 
 @dataclass
@@ -62,6 +65,17 @@ def optimize(
 
     defaults = strategy.default_params()
     fixed_params = {k: v for k, v in defaults.items() if k not in sweep_params}
+
+    # Check if strategy uses advanced position management
+    test_params = dict(zip(param_names, combinations[0]))
+    test_params.update(fixed_params)
+    has_pm = strategy.position_management(**test_params) is not None
+
+    if has_pm:
+        return _optimize_with_pm(
+            strategy, df, param_names, combinations, fixed_params,
+            metric, init_cash, fees, freq, progress_cb,
+        )
 
     # Generate signals for all combinations and stack into multi-column DataFrames
     all_entries = {}
@@ -168,6 +182,81 @@ def optimize(
     best_value = best_row[metric]
 
     # Build heatmap for 2D sweeps
+    sweep_x = param_names[0]
+    sweep_y = param_names[1] if len(param_names) >= 2 else None
+    heatmap_data = None
+
+    if sweep_y:
+        heatmap_data = results_df.pivot_table(
+            index=sweep_y, columns=sweep_x, values=metric, aggfunc="first"
+        )
+
+    return OptimizationResult(
+        results_df=results_df,
+        best_params=best_params,
+        best_metric_value=best_value,
+        metric_name=metric,
+        sweep_x=sweep_x,
+        sweep_y=sweep_y,
+        heatmap_data=heatmap_data,
+    )
+
+
+def _optimize_with_pm(
+    strategy, df, param_names, combinations, fixed_params,
+    metric, init_cash, fees, freq, progress_cb,
+):
+    """Optimize strategies with advanced position management (per-combo simulation)."""
+    metric_map = {
+        "total_return": "total_return",
+        "sharpe_ratio": "sharpe_ratio",
+        "sortino_ratio": "sortino_ratio",
+        "calmar_ratio": "calmar_ratio",
+        "win_rate": "win_rate",
+        "profit_factor": "profit_factor",
+        "max_drawdown_pct": "max_drawdown_pct",
+        "total_trades": "total_trades",
+    }
+
+    results = []
+    for i, combo in enumerate(combinations):
+        params = dict(zip(param_names, combo))
+        full_params = {**fixed_params, **params}
+
+        entries, exits = strategy.generate_signals(df, **full_params)
+        pm_config = strategy.position_management(**full_params)
+        sl_distances = strategy.compute_sl_distances(df, **full_params)
+
+        equity_arr, trade_records, n_trades = simulate(
+            df=df, entries=entries, exits=exits, sl_distances=sl_distances,
+            config=pm_config, init_cash=init_cash, fees=fees,
+        )
+
+        sim_result = build_simulation_result(
+            equity_arr, trade_records, n_trades, df.index, init_cash, fees,
+        )
+
+        row = dict(zip(param_names, combo))
+        for our_name, metrics_key in metric_map.items():
+            row[our_name] = sim_result.metrics.get(metrics_key, 0.0)
+        row["total_trades"] = int(row["total_trades"])
+        results.append(row)
+
+        if progress_cb is not None:
+            progress_cb(i + 1, len(combinations), "simulate")
+
+    results_df = pd.DataFrame(results)
+
+    # Find best
+    if metric == "max_drawdown_pct":
+        best_idx = results_df[metric].idxmin()
+    else:
+        best_idx = results_df[metric].idxmax()
+
+    best_row = results_df.iloc[best_idx]
+    best_params = {name: best_row[name] for name in param_names}
+    best_value = best_row[metric]
+
     sweep_x = param_names[0]
     sweep_y = param_names[1] if len(param_names) >= 2 else None
     heatmap_data = None

@@ -13,6 +13,7 @@ import vectorbt as vbt
 
 from src.strategies.base import BaseStrategy
 from src.engine.optimizer import optimize
+from src.engine.runner import run_backtest
 
 
 @dataclass
@@ -157,7 +158,7 @@ def run_walk_forward(
         param_names = list(sweep_params.keys())
         best = {name: best_row[name] for name in param_names}
 
-        # Run best params on OOS
+        # Run best params on OOS via run_backtest (supports both VBT and PM paths)
         defaults = strategy.default_params()
         full_params = {**defaults, **best}
 
@@ -166,23 +167,14 @@ def run_walk_forward(
             if hasattr(v, 'item'):
                 full_params[k] = v.item()
 
-        entries, exits = strategy.generate_signals(oos_df, **full_params)
-        pf_kwargs = dict(close=oos_df["close"], entries=entries, exits=exits, init_cash=init_cash, fees=fees)
-        if freq:
-            pf_kwargs["freq"] = freq
-        oos_pf = vbt.Portfolio.from_signals(**pf_kwargs)
-        oos_stats = oos_pf.stats()
+        oos_result = run_backtest(strategy, oos_df, full_params, init_cash, fees, freq=freq)
+        oos_metrics = oos_result.metrics
 
         # IS stats for the best params
-        is_entries, is_exits = strategy.generate_signals(is_df, **full_params)
-        is_pf_kwargs = dict(close=is_df["close"], entries=is_entries, exits=is_exits, init_cash=init_cash, fees=fees)
-        if freq:
-            is_pf_kwargs["freq"] = freq
-        is_pf = vbt.Portfolio.from_signals(**is_pf_kwargs)
-        is_stats = is_pf.stats()
+        is_result = run_backtest(strategy, is_df, full_params, init_cash, fees, freq=freq)
+        is_metrics = is_result.metrics
 
-        oos_sharpe = _safe(oos_stats, "Sharpe Ratio")
-        # Cap inf values
+        oos_sharpe = oos_metrics.get("sharpe_ratio", 0.0)
         if np.isinf(oos_sharpe):
             oos_sharpe = 0.0
 
@@ -193,16 +185,16 @@ def run_walk_forward(
             oos_start=str(oos_df.index[0]),
             oos_end=str(oos_df.index[-1]),
             best_params=best,
-            is_sharpe=min(_safe(is_stats, "Sharpe Ratio"), 99.0),  # cap inf
-            is_return=_safe(is_stats, "Total Return [%]"),
+            is_sharpe=min(is_metrics.get("sharpe_ratio", 0.0), 99.0),
+            is_return=is_metrics.get("total_return", 0.0),
             oos_sharpe=oos_sharpe,
-            oos_return=_safe(oos_stats, "Total Return [%]"),
-            oos_trades=int(_safe(oos_stats, "Total Trades", 0)),
+            oos_return=oos_metrics.get("total_return", 0.0),
+            oos_trades=int(oos_metrics.get("total_trades", 0)),
         )
         windows.append(window)
 
         # Collect OOS equity, chain from previous window
-        oos_equity = oos_pf.value()
+        oos_equity = oos_result.equity_curve
         if oos_equities:
             prev_end = oos_equities[-1].iloc[-1]
             scale = prev_end / oos_equity.iloc[0]
@@ -231,13 +223,9 @@ def run_walk_forward(
         if hasattr(v, 'item'):
             full_params[k] = v.item()
 
-    full_entries, full_exits = strategy.generate_signals(df, **full_params)
-    full_pf_kwargs = dict(close=df["close"], entries=full_entries, exits=full_exits, init_cash=init_cash, fees=fees)
-    if freq:
-        full_pf_kwargs["freq"] = freq
-    full_pf = vbt.Portfolio.from_signals(**full_pf_kwargs)
-    full_equity = full_pf.value()
-    full_stats = full_pf.stats()
+    full_result = run_backtest(strategy, df, full_params, init_cash, fees, freq=freq)
+    full_equity = full_result.equity_curve
+    full_metrics = full_result.metrics
 
     # Summary DataFrame
     summary_data = []
@@ -270,7 +258,7 @@ def run_walk_forward(
         full_sample_equity=full_equity,
         summary_df=summary_df,
         oos_total_return=oos_total_return,
-        full_sample_return=_safe(full_stats, "Total Return [%]"),
+        full_sample_return=full_metrics.get("total_return", 0.0),
         oos_sharpe=avg_oos_sharpe,
     )
 
