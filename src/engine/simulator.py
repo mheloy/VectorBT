@@ -71,6 +71,7 @@ def _simulate_core(
     # Trade params
     fees,
     init_cash,
+    ignore_signal_exits,
 ):
     """Core Numba-JIT simulation loop.
 
@@ -313,8 +314,8 @@ def _simulate_core(
                     equity[i] = cash
                     continue
 
-            # 6. Signal exit check
-            if exits_arr[i]:
+            # 6. Signal exit check (skipped when PM manages all exits)
+            if exits_arr[i] and not ignore_signal_exits:
                 exit_price = close_arr[i]
                 pnl_per_unit = (exit_price - entry_price) * direction
                 trade_pnl = pnl_per_unit * position_fraction * allocated_capital / entry_price
@@ -464,6 +465,7 @@ def simulate(
         final_tp_r=config.final_tp_r,
         fees=fees,
         init_cash=init_cash,
+        ignore_signal_exits=True,  # PM handles all exits; don't close on signal flip
     )
 
     return equity, trades[:n_trades], n_trades
