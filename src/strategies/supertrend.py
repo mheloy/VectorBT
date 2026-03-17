@@ -279,6 +279,7 @@ class SuperTrendStrategy(BaseStrategy):
         h1_filter="On",
         sl_atr_mult=1.5,
         rr_ratio=3.0,
+        **kwargs,
     ) -> tuple[pd.Series, pd.Series]:
         st = calc_supertrend(df, int(period), float(factor), source)
         direction = st["direction"]
