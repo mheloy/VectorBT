@@ -3,9 +3,16 @@
 Splits data into anchored or rolling IS/OOS windows where OOS segments
 tile the entire dataset with no gaps. Optimizes parameters on IS data,
 validates on OOS data, and concatenates OOS results.
+
+Methodology aligned with backtest-engine:
+- Default metric: Calmar ratio (return / max drawdown)
+- Default IS/OOS ratio: 5:1
+- Min trades: 20
+- Efficiency Ratio: OOS Sharpe / IS Sharpe per window
+- Pass/Fail verdict: ER >= 0.5 AND >= 60% windows profitable
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -30,6 +37,7 @@ class WalkForwardWindow:
     oos_sharpe: float
     oos_return: float
     oos_trades: int
+    efficiency_ratio: float  # OOS Sharpe / IS Sharpe (0 if IS Sharpe <= 0)
 
 
 @dataclass
@@ -42,6 +50,12 @@ class WalkForwardResult:
     oos_total_return: float
     full_sample_return: float
     oos_sharpe: float
+    # Robustness metrics (aligned with backtest-engine)
+    avg_efficiency_ratio: float
+    profitable_windows_pct: float
+    verdict: str  # "PASS" or "FAIL"
+    verdict_reason: str
+    param_stability: dict  # Per-param {mean, stddev} across windows
 
 
 def run_walk_forward(
@@ -52,8 +66,8 @@ def run_walk_forward(
     is_bars: int | None = None,
     oos_bars: int | None = None,
     anchored: bool = False,
-    min_trades: int = 3,
-    metric: str = "sharpe_ratio",
+    min_trades: int = 20,
+    metric: str = "calmar_ratio",
     init_cash: float = 10_000.0,
     fees: float = 0.0,
     freq: str | None = None,
@@ -75,7 +89,7 @@ def run_walk_forward(
             If False, IS is a rolling fixed-size window.
         min_trades: Minimum trades required in IS optimization.
             Combos with fewer trades are penalized.
-        metric: Metric to optimize on IS data.
+        metric: Metric to optimize on IS data (default: calmar_ratio).
         init_cash: Starting cash.
         fees: Fee fraction.
         freq: Data frequency string.
@@ -86,9 +100,9 @@ def run_walk_forward(
     if oos_bars is None:
         oos_bars = total_bars // n_windows
 
-    # Calculate IS size: default to 3x OOS
+    # Calculate IS size: default to 5x OOS (matches backtest-engine)
     if is_bars is None:
-        is_bars = oos_bars * 3
+        is_bars = oos_bars * 5
 
     # Generate tiled IS/OOS splits
     splits = []
@@ -174,9 +188,18 @@ def run_walk_forward(
         is_result = run_backtest(strategy, is_df, full_params, init_cash, fees, freq=freq)
         is_metrics = is_result.metrics
 
-        oos_sharpe = oos_metrics.get("sharpe_ratio", 0.0)
-        if np.isinf(oos_sharpe):
-            oos_sharpe = 0.0
+        is_sharpe_val = is_metrics.get("sharpe_ratio", 0.0)
+        if np.isinf(is_sharpe_val):
+            is_sharpe_val = 0.0
+        oos_sharpe_val = oos_metrics.get("sharpe_ratio", 0.0)
+        if np.isinf(oos_sharpe_val):
+            oos_sharpe_val = 0.0
+
+        # Efficiency Ratio: OOS Sharpe / IS Sharpe (matches backtest-engine)
+        if is_sharpe_val > 0:
+            er = oos_sharpe_val / is_sharpe_val
+        else:
+            er = 0.0
 
         window = WalkForwardWindow(
             window_idx=i,
@@ -185,11 +208,12 @@ def run_walk_forward(
             oos_start=str(oos_df.index[0]),
             oos_end=str(oos_df.index[-1]),
             best_params=best,
-            is_sharpe=min(is_metrics.get("sharpe_ratio", 0.0), 99.0),
+            is_sharpe=min(is_sharpe_val, 99.0),
             is_return=is_metrics.get("total_return", 0.0),
-            oos_sharpe=oos_sharpe,
+            oos_sharpe=oos_sharpe_val,
             oos_return=oos_metrics.get("total_return", 0.0),
             oos_trades=int(oos_metrics.get("total_trades", 0)),
+            efficiency_ratio=er,
         )
         windows.append(window)
 
@@ -227,6 +251,49 @@ def run_walk_forward(
     full_equity = full_result.equity_curve
     full_metrics = full_result.metrics
 
+    # --- Robustness metrics ---
+
+    # Efficiency Ratio aggregate
+    valid_ers = [w.efficiency_ratio for w in windows if w.efficiency_ratio > 0]
+    avg_er = float(np.mean(valid_ers)) if valid_ers else 0.0
+
+    # Profitable windows
+    profitable_count = sum(1 for w in windows if w.oos_return > 0)
+    profitable_pct = (profitable_count / len(windows) * 100) if windows else 0.0
+
+    # Verdict (matches backtest-engine criteria)
+    er_pass = avg_er >= 0.5
+    win_pass = profitable_pct >= 60
+    if er_pass and win_pass:
+        verdict = "PASS"
+        verdict_reason = f"ER {avg_er:.2f} >= 0.5, {profitable_pct:.0f}% >= 60% windows profitable"
+    else:
+        reasons = []
+        if not er_pass:
+            reasons.append(f"ER {avg_er:.2f} < 0.5")
+        if not win_pass:
+            reasons.append(f"{profitable_pct:.0f}% < 60% windows profitable")
+        verdict = "FAIL"
+        verdict_reason = ", ".join(reasons)
+
+    # Parameter stability: mean ± stddev per swept param
+    param_stability = {}
+    for pname in sweep_params.keys():
+        values = []
+        for w in windows:
+            val = w.best_params.get(pname)
+            if val is not None:
+                try:
+                    values.append(float(val))
+                except (TypeError, ValueError):
+                    pass  # Skip non-numeric (categorical) params
+        if values:
+            param_stability[pname] = {
+                "mean": float(np.mean(values)),
+                "stddev": float(np.std(values)),
+                "values": values,
+            }
+
     # Summary DataFrame
     summary_data = []
     for w in windows:
@@ -240,6 +307,7 @@ def run_walk_forward(
             "OOS Sharpe": w.oos_sharpe,
             "OOS Return %": w.oos_return,
             "OOS Trades": w.oos_trades,
+            "Efficiency Ratio": w.efficiency_ratio,
         })
     summary_df = pd.DataFrame(summary_data)
 
@@ -260,6 +328,11 @@ def run_walk_forward(
         oos_total_return=oos_total_return,
         full_sample_return=full_metrics.get("total_return", 0.0),
         oos_sharpe=avg_oos_sharpe,
+        avg_efficiency_ratio=avg_er,
+        profitable_windows_pct=profitable_pct,
+        verdict=verdict,
+        verdict_reason=verdict_reason,
+        param_stability=param_stability,
     )
 
 

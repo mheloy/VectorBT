@@ -19,7 +19,7 @@ raw_data = cached_load()
 strategies = get_all_strategies()
 strategy_name = st.sidebar.selectbox("Strategy", list(strategies.keys()), key="wf_strategy")
 strategy = strategies[strategy_name]
-timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("1H"), key="wf_tf")
+timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("5M"), key="wf_tf")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Sweep Parameters")
@@ -45,10 +45,10 @@ for p in numeric_params:
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Walk-Forward Settings")
-n_windows = st.sidebar.slider("Number of OOS windows", 4, 20, 8, key="wf_nwin")
+n_windows = st.sidebar.slider("Number of OOS windows", 4, 50, 8, key="wf_nwin")
 anchored = st.sidebar.checkbox("Anchored IS (expanding window)", value=False, key="wf_anchored")
-min_trades = st.sidebar.slider("Min trades per IS window", 1, 20, 3, key="wf_min_trades")
-metric = st.sidebar.selectbox("Optimization metric", ["sharpe_ratio", "total_return", "sortino_ratio", "profit_factor", "calmar_ratio"], key="wf_metric")
+min_trades = st.sidebar.slider("Min trades per IS window", 5, 50, 20, key="wf_min_trades")
+metric = st.sidebar.selectbox("Optimization metric", ["calmar_ratio", "sharpe_ratio", "total_return", "sortino_ratio", "profit_factor"], key="wf_metric")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="wf_cash")
 fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="wf_fees")
 
@@ -59,7 +59,7 @@ if st.sidebar.button("Run Walk-Forward", type="primary", use_container_width=Tru
 
     def on_wf_progress(current, total, phase):
         if phase == "window":
-            progress_bar.progress(current / (total + 1), text=f"Window {current}/{total}: optimizing IS → testing OOS")
+            progress_bar.progress(current / (total + 1), text=f"Window {current}/{total}: optimizing IS -> testing OOS")
         elif phase == "full_sample":
             progress_bar.progress(total / (total + 1), text="Running full-sample optimization...")
 
@@ -79,18 +79,42 @@ if st.sidebar.button("Run Walk-Forward", type="primary", use_container_width=Tru
 if "wf_result" in st.session_state:
     result = st.session_state["wf_result"]
 
-    # Metrics
-    col1, col2, col3 = st.columns(3)
-    col1.metric("WF OOS Return", f"{result.oos_total_return:.2f}%")
-    col2.metric("Full-Sample Return", f"{result.full_sample_return:.2f}%")
-    col3.metric("Avg OOS Sharpe", f"{result.oos_sharpe:.2f}")
+    # --- Verdict banner ---
+    if result.verdict == "PASS":
+        st.success(f"**PASS** — {result.verdict_reason}")
+    else:
+        st.error(f"**FAIL** — {result.verdict_reason}")
 
+    # --- Metrics cards ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("WF OOS Return", f"{result.oos_total_return:.2f}%")
+    col2.metric("Avg Efficiency Ratio", f"{result.avg_efficiency_ratio:.2f}")
+    col3.metric("Profitable Windows", f"{result.profitable_windows_pct:.0f}%")
+    col4.metric("Full-Sample Return", f"{result.full_sample_return:.2f}%")
+
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Avg OOS Sharpe", f"{result.oos_sharpe:.2f}")
     overfitting_ratio = 0.0
     if result.full_sample_return != 0:
         overfitting_ratio = result.oos_total_return / result.full_sample_return * 100
-    st.info(f"OOS/Full-Sample ratio: **{overfitting_ratio:.1f}%** (closer to 100% = less overfitting)")
+    col6.metric("OOS/Full-Sample Ratio", f"{overfitting_ratio:.1f}%")
+    col7.metric("Total Windows", f"{len(result.windows)}")
 
-    # Equity comparison
+    # --- Parameter Stability ---
+    if result.param_stability:
+        st.subheader("Parameter Stability Across Windows")
+        stability_data = []
+        for pname, stats in result.param_stability.items():
+            stability_data.append({
+                "Parameter": pname,
+                "Mean": f"{stats['mean']:.2f}",
+                "Std Dev": f"{stats['stddev']:.2f}",
+                "Stable": "Yes" if stats['stddev'] < stats['mean'] * 0.1 else "No",
+                "Values": str([round(v, 2) for v in stats['values']]),
+            })
+        st.dataframe(stability_data, use_container_width=True, hide_index=True)
+
+    # --- Equity comparison ---
     st.subheader("OOS Equity vs Full-Sample Equity")
     fig = go.Figure()
     if not result.oos_equity_curve.empty:
@@ -105,15 +129,27 @@ if "wf_result" in st.session_state:
     fig.update_layout(height=400, yaxis_title="Equity ($)", margin=dict(l=0, r=0, t=30, b=0))
     st.plotly_chart(fig, use_container_width=True)
 
-    # IS vs OOS comparison per window
+    # --- IS vs OOS Sharpe + Efficiency Ratio per window ---
     st.subheader("In-Sample vs Out-of-Sample per Window")
+    win_indices = list(range(len(result.summary_df)))
+
     fig2 = go.Figure()
-    windows = list(range(len(result.summary_df)))
-    fig2.add_trace(go.Bar(x=windows, y=result.summary_df["IS Sharpe"], name="IS Sharpe", marker_color="steelblue"))
-    fig2.add_trace(go.Bar(x=windows, y=result.summary_df["OOS Sharpe"], name="OOS Sharpe", marker_color="coral"))
+    fig2.add_trace(go.Bar(x=win_indices, y=result.summary_df["IS Sharpe"], name="IS Sharpe", marker_color="steelblue"))
+    fig2.add_trace(go.Bar(x=win_indices, y=result.summary_df["OOS Sharpe"], name="OOS Sharpe", marker_color="coral"))
     fig2.update_layout(barmode="group", height=350, xaxis_title="Window", yaxis_title="Sharpe Ratio", margin=dict(l=0, r=0, t=30, b=0))
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Window details table
+    # Efficiency Ratio per window
+    if "Efficiency Ratio" in result.summary_df.columns:
+        st.subheader("Efficiency Ratio per Window")
+        fig3 = go.Figure()
+        er_vals = result.summary_df["Efficiency Ratio"]
+        colors = ["green" if v >= 0.5 else "red" for v in er_vals]
+        fig3.add_trace(go.Bar(x=win_indices, y=er_vals, marker_color=colors, name="ER"))
+        fig3.add_hline(y=0.5, line_dash="dash", line_color="orange", annotation_text="ER = 0.5 threshold")
+        fig3.update_layout(height=300, xaxis_title="Window", yaxis_title="Efficiency Ratio (OOS Sharpe / IS Sharpe)", margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig3, use_container_width=True)
+
+    # --- Window details table ---
     st.subheader("Window Details")
     st.dataframe(result.summary_df, use_container_width=True, hide_index=True)
