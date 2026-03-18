@@ -56,6 +56,9 @@ class WalkForwardResult:
     verdict: str  # "PASS" or "FAIL"
     verdict_reason: str
     param_stability: dict  # Per-param {mean, stddev} across windows
+    holdout_metrics: dict | None = None
+    holdout_equity: pd.Series | None = None
+    holdout_params: dict | None = None
 
 
 def run_walk_forward(
@@ -69,9 +72,13 @@ def run_walk_forward(
     min_trades: int = 20,
     metric: str = "calmar_ratio",
     init_cash: float = 10_000.0,
-    fees: float = 0.0,
+    fees: float = 0.000006,
+    slippage: float = 0.000004,
     freq: str | None = None,
     progress_cb=None,
+    execution_mode: str = "next_bar_open",
+    holdout_enabled: bool = True,
+    holdout_pct: float = 0.10,
 ) -> WalkForwardResult:
     """Run walk-forward optimization with full OOS data coverage.
 
@@ -94,7 +101,17 @@ def run_walk_forward(
         fees: Fee fraction.
         freq: Data frequency string.
     """
-    total_bars = len(df)
+    # Hold-out split
+    if holdout_enabled and holdout_pct > 0:
+        split_idx = int(len(df) * (1 - holdout_pct))
+        train_df = df.iloc[:split_idx]
+        holdout_df = df.iloc[split_idx:]
+    else:
+        train_df = df
+        holdout_df = None
+
+    # Use train_df for all WFA windows
+    total_bars = len(train_df)
 
     # Calculate OOS size: tile the entire dataset into n_windows
     if oos_bars is None:
@@ -135,8 +152,8 @@ def run_walk_forward(
     oos_equities = []
 
     for i, ((is_s, is_e), (oos_s, oos_e)) in enumerate(splits):
-        is_df = df.iloc[is_s:is_e]
-        oos_df = df.iloc[oos_s:oos_e]
+        is_df = train_df.iloc[is_s:is_e]
+        oos_df = train_df.iloc[oos_s:oos_e]
 
         if progress_cb is not None:
             progress_cb(i + 1, len(splits), "window")
@@ -152,7 +169,9 @@ def run_walk_forward(
             metric=metric,
             init_cash=init_cash,
             fees=fees,
+            slippage=slippage,
             freq=freq,
+            execution_mode=execution_mode,
         )
 
         # Filter: pick best combo that has >= min_trades
@@ -181,11 +200,11 @@ def run_walk_forward(
             if hasattr(v, 'item'):
                 full_params[k] = v.item()
 
-        oos_result = run_backtest(strategy, oos_df, full_params, init_cash, fees, freq=freq)
+        oos_result = run_backtest(strategy, oos_df, full_params, init_cash, fees, slippage=slippage, freq=freq, execution_mode=execution_mode)
         oos_metrics = oos_result.metrics
 
         # IS stats for the best params
-        is_result = run_backtest(strategy, is_df, full_params, init_cash, fees, freq=freq)
+        is_result = run_backtest(strategy, is_df, full_params, init_cash, fees, slippage=slippage, freq=freq, execution_mode=execution_mode)
         is_metrics = is_result.metrics
 
         is_sharpe_val = is_metrics.get("sharpe_ratio", 0.0)
@@ -231,7 +250,7 @@ def run_walk_forward(
     # Full-sample single optimization for comparison
     if progress_cb is not None:
         progress_cb(len(splits), len(splits), "full_sample")
-    full_opt = optimize(strategy, df, sweep_params, metric, init_cash, fees, freq)
+    full_opt = optimize(strategy, train_df, sweep_params, metric, init_cash, fees, slippage=slippage, freq=freq, execution_mode=execution_mode)
     # Apply min_trades filter to full optimization too
     full_filtered = full_opt.results_df[full_opt.results_df["total_trades"] >= min_trades]
     if full_filtered.empty:
@@ -247,7 +266,7 @@ def run_walk_forward(
         if hasattr(v, 'item'):
             full_params[k] = v.item()
 
-    full_result = run_backtest(strategy, df, full_params, init_cash, fees, freq=freq)
+    full_result = run_backtest(strategy, train_df, full_params, init_cash, fees, slippage=slippage, freq=freq, execution_mode=execution_mode)
     full_equity = full_result.equity_curve
     full_metrics = full_result.metrics
 
@@ -320,6 +339,25 @@ def run_walk_forward(
     valid_sharpes = [w.oos_sharpe for w in windows if not np.isinf(w.oos_sharpe)]
     avg_oos_sharpe = float(np.mean(valid_sharpes)) if valid_sharpes else 0.0
 
+    # Hold-out backtest
+    holdout_metrics = None
+    holdout_equity = None
+    holdout_params = None
+    if holdout_df is not None and len(holdout_df) > 0 and windows:
+        last_params = windows[-1].best_params
+        full_holdout_params = {**strategy.default_params(), **last_params}
+        for k, v in full_holdout_params.items():
+            if hasattr(v, 'item'):
+                full_holdout_params[k] = v.item()
+
+        holdout_bt = run_backtest(
+            strategy, holdout_df, full_holdout_params, init_cash, fees,
+            slippage=slippage, freq=freq, execution_mode=execution_mode,
+        )
+        holdout_metrics = holdout_bt.metrics
+        holdout_equity = holdout_bt.equity_curve
+        holdout_params = last_params
+
     return WalkForwardResult(
         windows=windows,
         oos_equity_curve=oos_equity_curve,
@@ -333,6 +371,9 @@ def run_walk_forward(
         verdict=verdict,
         verdict_reason=verdict_reason,
         param_stability=param_stability,
+        holdout_metrics=holdout_metrics,
+        holdout_equity=holdout_equity,
+        holdout_params=holdout_params,
     )
 
 
