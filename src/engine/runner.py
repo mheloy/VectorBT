@@ -3,7 +3,7 @@
 import vectorbt as vbt
 import pandas as pd
 
-from src.strategies.base import BaseStrategy
+from src.strategies.base import BaseStrategy, SignalResult
 from src.engine.sim_result import BacktestResult, build_simulation_result
 from src.engine.simulator import simulate
 
@@ -13,10 +13,12 @@ def run_backtest(
     df: pd.DataFrame,
     params: dict | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0,
+    fees: float = 0.000006,
+    slippage: float = 0.000004,
     sl_stop: float | None = None,
     tp_stop: float | None = None,
     freq: str | None = None,
+    execution_mode: str = "next_bar_open",
 ) -> BacktestResult:
     """Run a single backtest and return a BacktestResult.
 
@@ -28,16 +30,30 @@ def run_backtest(
         df: OHLCV DataFrame with datetime index.
         params: Strategy parameter overrides. Uses defaults if None.
         init_cash: Starting cash.
-        fees: Fee per trade as fraction (0.0001 = 1bp).
+        fees: Fee per trade as fraction (0.000006 = 0.6bp per side).
+        slippage: Slippage as fraction of price (0.000004 = 0.4bp).
+            Combined with fees gives ~1bp total cost per side.
         sl_stop: Stop-loss as fraction of entry price (e.g., 0.02 = 2%).
         tp_stop: Take-profit as fraction of entry price.
         freq: Data frequency string (e.g., '5min', '1h'). Auto-detected if None.
+        execution_mode: Trade execution timing. 'next_bar_open' (default) executes
+            signals at the next bar's open price (realistic). 'same_bar_close'
+            executes at the signal bar's close (legacy/optimistic).
     """
     effective_params = strategy.default_params()
     if params:
         effective_params.update(params)
 
-    entries, exits = strategy.generate_signals(df, **effective_params)
+    signal_result = strategy.generate_signals(df, **effective_params)
+    if isinstance(signal_result, SignalResult):
+        entries = signal_result.entries
+        exits = signal_result.exits
+        short_entries = signal_result.short_entries
+        short_exits = signal_result.short_exits
+    else:
+        entries, exits = signal_result
+        short_entries = None
+        short_exits = None
 
     # Check if strategy wants advanced position management
     pm_config = strategy.position_management(**effective_params)
@@ -65,6 +81,10 @@ def run_backtest(
             max_lot_value=pm_config.max_lot_value,
             st_values=st_values,
             fixed_lot_units=fixed_lot,
+            short_entries=short_entries,
+            short_exits=short_exits,
+            slippage=slippage,
+            execution_mode=execution_mode,
         )
 
         sim_result = build_simulation_result(
@@ -89,7 +109,19 @@ def run_backtest(
         exits=exits,
         init_cash=init_cash,
         fees=fees,
+        slippage=slippage,
     )
+
+    # Pass OHLC for intra-bar stop evaluation and next-bar-open execution
+    if execution_mode == "next_bar_open":
+        pf_kwargs["open"] = df["open"]
+    pf_kwargs["high"] = df["high"]
+    pf_kwargs["low"] = df["low"]
+
+    # Short signals
+    if short_entries is not None:
+        pf_kwargs["short_entries"] = short_entries
+        pf_kwargs["short_exits"] = short_exits
 
     if freq:
         pf_kwargs["freq"] = freq
@@ -98,5 +130,12 @@ def run_backtest(
     if tp_stop is not None:
         pf_kwargs["tp_stop"] = tp_stop
 
-    portfolio = vbt.Portfolio.from_signals(**pf_kwargs)
+    try:
+        portfolio = vbt.Portfolio.from_signals(**pf_kwargs)
+    except TypeError:
+        # Fallback: VBT version may not support slippage kwarg
+        pf_kwargs.pop("slippage", None)
+        pf_kwargs["fees"] = fees + slippage
+        portfolio = vbt.Portfolio.from_signals(**pf_kwargs)
+
     return BacktestResult(portfolio=portfolio)
