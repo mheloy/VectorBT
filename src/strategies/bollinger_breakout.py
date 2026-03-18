@@ -3,7 +3,7 @@
 import vectorbt as vbt
 import pandas as pd
 
-from .base import BaseStrategy, StrategyParam
+from .base import BaseStrategy, StrategyParam, SignalResult
 
 
 class BollingerBreakout(BaseStrategy):
@@ -27,7 +27,7 @@ class BollingerBreakout(BaseStrategy):
 
     def generate_signals(
         self, df: pd.DataFrame, bb_period=20, bb_std=2
-    ) -> tuple[pd.Series, pd.Series]:
+    ) -> SignalResult:
         close = df["close"]
         bb = vbt.BBANDS.run(close, window=int(bb_period), alpha=float(bb_std))
 
@@ -36,4 +36,4 @@ class BollingerBreakout(BaseStrategy):
         # Sell when close crosses below lower band
         exits = close.vbt.crossed_below(bb.lower)
 
-        return entries, exits
+        return SignalResult(entries=entries, exits=exits)
