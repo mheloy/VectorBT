@@ -22,6 +22,15 @@ class StrategyParam:
     choices: list[Any] | None = None  # For categorical params (e.g., MA type)
 
 
+@dataclass
+class SignalResult:
+    """Result of signal generation, supporting both long-only and bidirectional strategies."""
+    entries: pd.Series              # long entries (always required)
+    exits: pd.Series                # long exits (always required)
+    short_entries: pd.Series | None = None
+    short_exits: pd.Series | None = None
+
+
 class BaseStrategy(ABC):
     """Abstract base class for all trading strategies."""
 
@@ -39,7 +48,7 @@ class BaseStrategy(ABC):
     @abstractmethod
     def generate_signals(
         self, df: pd.DataFrame, **params
-    ) -> tuple[pd.Series, pd.Series]:
+    ) -> SignalResult:
         """Generate entry and exit signals.
 
         Args:
@@ -47,7 +56,7 @@ class BaseStrategy(ABC):
             **params: Strategy parameter values.
 
         Returns:
-            Tuple of (entries, exits) as boolean pd.Series.
+            SignalResult with entries/exits (and optional short_entries/short_exits).
         """
         ...
 
