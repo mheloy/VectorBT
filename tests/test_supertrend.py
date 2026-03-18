@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.strategies.base import SignalResult
 from src.strategies.supertrend import (
     _price_source,
     _atr,
@@ -205,7 +206,7 @@ class TestSuperTrendStrategy:
 
     def test_parameters_count(self):
         params = self.strategy.parameters()
-        assert len(params) == 16  # 7 core + 9 position management
+        assert len(params) == 19  # 10 core + 9 position management
 
     def test_default_params(self):
         defaults = self.strategy.default_params()
@@ -213,41 +214,42 @@ class TestSuperTrendStrategy:
         assert defaults["factor"] == 1.8
         assert defaults["source"] == "hl2"
         assert defaults["atr_method"] == "sma"
-        assert defaults["h1_filter"] == "On"
+        assert defaults["filter_type"] == "h1_supertrend"
+        assert defaults["direction_mode"] == "both"
 
     def test_generate_signals_returns_boolean_series(self):
         df = make_ohlcv(n=500)
-        entries, exits = self.strategy.generate_signals(df, h1_filter="Off")
-        assert entries.dtype == bool
-        assert exits.dtype == bool
-        assert len(entries) == len(df)
-        assert len(exits) == len(df)
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        assert result.entries.dtype == bool
+        assert result.exits.dtype == bool
+        assert len(result.entries) == len(df)
+        assert len(result.exits) == len(df)
 
     def test_generate_signals_no_nan(self):
         df = make_ohlcv(n=500)
-        entries, exits = self.strategy.generate_signals(df, h1_filter="Off")
-        assert not entries.isna().any()
-        assert not exits.isna().any()
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        assert not result.entries.isna().any()
+        assert not result.exits.isna().any()
 
     def test_entries_and_exits_not_simultaneous(self):
         """An entry and exit should not fire on the same bar."""
         df = make_ohlcv(n=500)
-        entries, exits = self.strategy.generate_signals(df, h1_filter="Off")
-        overlap = entries & exits
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        overlap = result.entries & result.exits
         assert not overlap.any()
 
     def test_h1_filter_reduces_entries(self):
-        """H1 filter should block some entries, so On <= Off entries."""
+        """H1 filter should block some entries, so filtered <= unfiltered entries."""
         df = make_ohlcv(n=2000, freq="5min")
-        entries_off, _ = self.strategy.generate_signals(df, h1_filter="Off")
-        entries_on, _ = self.strategy.generate_signals(df, h1_filter="On")
-        assert entries_on.sum() <= entries_off.sum()
+        result_off = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        result_on = self.strategy.generate_signals(df, filter_type="h1_supertrend", direction_mode="long_only")
+        assert result_on.entries.sum() <= result_off.entries.sum()
 
     def test_with_trending_data_produces_signals(self):
         df = make_trending(n=500)
-        entries, exits = self.strategy.generate_signals(df, h1_filter="Off")
-        assert entries.sum() > 0
-        assert exits.sum() > 0
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        assert result.entries.sum() > 0
+        assert result.exits.sum() > 0
 
 
 # ---------------------------------------------------------------------------
@@ -305,3 +307,46 @@ class TestComputeStops:
         df = make_ohlcv(n=10, freq="5min")
         result = self.strategy.compute_stops(df, sl_atr_mult=1.5, rr_ratio=3.0)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional signal tests
+# ---------------------------------------------------------------------------
+
+
+class TestBidirectionalSignals:
+    def setup_method(self):
+        self.strategy = SuperTrendStrategy()
+
+    def test_generate_signals_returns_signal_result(self):
+        df = make_ohlcv(n=500)
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="both")
+        assert isinstance(result, SignalResult)
+        assert result.entries.dtype == bool
+        assert result.exits.dtype == bool
+        assert result.short_entries is not None
+        assert result.short_exits is not None
+
+    def test_short_entries_exist(self):
+        df = make_trending(n=500)
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="both")
+        assert result.short_entries.sum() > 0
+
+    def test_long_only_suppresses_shorts(self):
+        df = make_trending(n=500)
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="long_only")
+        assert result.short_entries.sum() == 0
+        assert result.entries.sum() > 0
+
+    def test_short_only_suppresses_longs(self):
+        df = make_trending(n=500)
+        result = self.strategy.generate_signals(df, filter_type="none", direction_mode="short_only")
+        assert result.entries.sum() == 0
+        assert result.short_entries.sum() > 0
+
+    def test_warmup_guard(self):
+        df = make_ohlcv(n=500)
+        result = self.strategy.generate_signals(df, period=17, filter_type="none", direction_mode="both")
+        warmup = max(17, 14) + 1
+        assert result.entries.iloc[:warmup].sum() == 0
+        assert result.short_entries.iloc[:warmup].sum() == 0

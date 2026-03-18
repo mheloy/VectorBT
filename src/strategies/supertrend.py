@@ -211,6 +211,18 @@ def _h1_direction(
     return h1_dir.reindex(df.index, method="ffill").fillna(0).astype(np.int8)
 
 
+def _ma_filter(
+    df: pd.DataFrame,
+    period: int = 200,
+    ma_type: str = "SMA",
+) -> pd.Series:
+    """Compute moving average for trend filtering."""
+    close = df["close"]
+    if ma_type.upper() == "EMA":
+        return close.ewm(span=period, adjust=False).mean()
+    return close.rolling(window=period, min_periods=period).mean()
+
+
 # ---------------------------------------------------------------------------
 # Strategy class
 # ---------------------------------------------------------------------------
@@ -249,9 +261,23 @@ class SuperTrendStrategy(BaseStrategy):
                 description="ATR smoothing (sma=backtest-engine, rma=PineScript)",
             ),
             StrategyParam(
-                "h1_filter", default="On",
-                choices=["On", "Off"],
-                description="H1 SuperTrend filter",
+                "filter_type", default="h1_supertrend",
+                choices=["h1_supertrend", "200ma", "none"],
+                description="Trend filter type",
+            ),
+            StrategyParam(
+                "direction_mode", default="both",
+                choices=["both", "long_only", "short_only"],
+                description="Allowed trade directions",
+            ),
+            StrategyParam(
+                "ma_filter_period", default=200, min_val=50, max_val=500, step=10,
+                description="MA filter period (used when filter_type=200ma)",
+            ),
+            StrategyParam(
+                "ma_filter_type", default="SMA",
+                choices=["SMA", "EMA"],
+                description="MA filter smoothing (used when filter_type=200ma)",
             ),
             StrategyParam(
                 "sl_atr_mult", default=1.9, min_val=0.5, max_val=5.0, step=0.1,
@@ -309,29 +335,67 @@ class SuperTrendStrategy(BaseStrategy):
         factor=1.8,
         source="hl2",
         atr_method="sma",
-        h1_filter="On",
+        filter_type="h1_supertrend",
+        direction_mode="both",
+        ma_filter_period=200,
+        ma_filter_type="SMA",
         sl_atr_mult=1.9,
         rr_ratio=3.0,
         **kwargs,
-    ) -> tuple[pd.Series, pd.Series]:
+    ) -> "SignalResult":
+        from .base import SignalResult
+
         st = calc_supertrend(df, int(period), float(factor), source,
                              atr_method=str(atr_method))
         direction = st["direction"]
 
         # Direction change signals
-        entries = (direction == -1) & (direction.shift(1) == 1)
-        exits = (direction == 1) & (direction.shift(1) == -1)
+        long_entries = (direction == -1) & (direction.shift(1) == 1)
+        long_exits = (direction == 1) & (direction.shift(1) == -1)
+        short_entries = (direction == 1) & (direction.shift(1) == -1)
+        short_exits = (direction == -1) & (direction.shift(1) == 1)
 
-        # H1 filter: same period/factor/source/atr_method as entry signal
-        if str(h1_filter) == "On":
+        # Apply trend filter
+        filter_type = str(filter_type)
+        if filter_type == "h1_supertrend":
             h1_dir = _h1_direction(df, int(period), float(factor), str(source),
                                    atr_method=str(atr_method))
-            entries = entries & (h1_dir == -1)
+            long_entries = long_entries & (h1_dir == -1)
+            short_entries = short_entries & (h1_dir == 1)
+        elif filter_type == "200ma":
+            ma = _ma_filter(df, int(ma_filter_period), str(ma_filter_type))
+            long_entries = long_entries & (df["close"] > ma)
+            short_entries = short_entries & (df["close"] < ma)
+        # filter_type == "none": no filtering
 
-        entries = entries.fillna(False).astype(bool)
-        exits = exits.fillna(False).astype(bool)
+        # Apply direction mode
+        direction_mode = str(direction_mode)
+        if direction_mode == "long_only":
+            short_entries = pd.Series(False, index=df.index)
+            short_exits = pd.Series(False, index=df.index)
+        elif direction_mode == "short_only":
+            long_entries = pd.Series(False, index=df.index)
+            long_exits = pd.Series(False, index=df.index)
 
-        return entries, exits
+        # Warmup guard — suppress signals before indicators stabilize
+        warmup_bars = max(int(period), 14) + 1
+        long_entries.iloc[:warmup_bars] = False
+        long_exits.iloc[:warmup_bars] = False
+        short_entries.iloc[:warmup_bars] = False
+        short_exits.iloc[:warmup_bars] = False
+
+        # Clean NaN
+        long_entries = long_entries.fillna(False).astype(bool)
+        long_exits = long_exits.fillna(False).astype(bool)
+        short_entries = short_entries.fillna(False).astype(bool)
+        short_exits = short_exits.fillna(False).astype(bool)
+
+        return SignalResult(
+            entries=long_entries,
+            exits=long_exits,
+            short_entries=short_entries,
+            short_exits=short_exits,
+        )
 
     def compute_supertrend_values(
         self, df: pd.DataFrame, period=17, factor=1.8, source="hl2",
