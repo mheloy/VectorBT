@@ -24,15 +24,35 @@ timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index
 st.sidebar.markdown("---")
 st.sidebar.subheader("Sweep Parameters")
 
+# Default sweep config for SuperTrend (centered on profitable backtest-engine params)
+_WF_DEFAULTS = {
+    "period":      {"range": (15, 19), "step": 2},
+    "factor":      {"range": (1.5, 2.1), "step": 0.3},
+    "sl_atr_mult": {"range": (1.5, 2.3), "step": 0.4},
+}
+
 numeric_params = [p for p in strategy.parameters() if p.min_val is not None]
 sweep_params = {}
 for p in numeric_params:
+    wf_def = _WF_DEFAULTS.get(p.name)
+    if wf_def:
+        # Use WFA-specific defaults (range + step)
+        lo = max(p.min_val, wf_def["range"][0])
+        hi = min(p.max_val, wf_def["range"][1])
+        def_step = wf_def["step"]
+    else:
+        lo, hi = p.min_val, p.max_val
+        def_step = float(p.step or 5)
+
     vals = st.sidebar.slider(
-        f"{p.name} range", p.min_val, p.max_val, (p.min_val, p.max_val),
+        f"{p.name} range", p.min_val, p.max_val, (lo, hi),
         step=p.step or 1, key=f"wf_{p.name}",
     )
-    default_step = float(p.step or 5)
-    step = st.sidebar.number_input(f"{p.name} step", value=default_step, min_value=default_step, step=0.1, format="%.4f", key=f"wf_{p.name}_step")
+    step = st.sidebar.number_input(
+        f"{p.name} step", value=def_step,
+        min_value=float(p.step or 0.1), step=0.1, format="%.4f",
+        key=f"wf_{p.name}_step",
+    )
     if isinstance(step, float) and step != int(step):
         sweep_vals = []
         v = float(vals[0])
@@ -42,6 +62,10 @@ for p in numeric_params:
         sweep_params[p.name] = sweep_vals
     else:
         sweep_params[p.name] = list(range(int(vals[0]), int(vals[1]) + 1, int(step)))
+
+# Force adv_pm=On for SuperTrend PM path
+if "adv_pm" in {p.name for p in strategy.parameters()}:
+    sweep_params["adv_pm"] = ["On"]
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Walk-Forward Settings")
