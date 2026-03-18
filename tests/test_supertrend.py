@@ -205,13 +205,13 @@ class TestSuperTrendStrategy:
 
     def test_parameters_count(self):
         params = self.strategy.parameters()
-        assert len(params) == 14  # 6 core + 8 position management
+        assert len(params) == 18  # 9 core (incl H1 params) + 9 position management
 
     def test_default_params(self):
         defaults = self.strategy.default_params()
-        assert defaults["period"] == 16
-        assert defaults["factor"] == 1.4
-        assert defaults["source"] == "hl2"
+        assert defaults["period"] == 15
+        assert defaults["factor"] == 1.5
+        assert defaults["source"] == "hlc3"
         assert defaults["h1_filter"] == "On"
 
     def test_generate_signals_returns_boolean_series(self):

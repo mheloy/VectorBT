@@ -52,6 +52,8 @@ def _simulate_core(
     entries_arr,
     exits_arr,
     sl_distance_arr,
+    st_values_arr,  # SuperTrend line values for ST-line trailing
+    trail_mode_flag,  # 0 = atr_stages, 1 = st_line
     # Partial TP config (flat arrays for Numba)
     n_partial_tps,
     pt_triggers,  # R-multiple triggers
@@ -240,41 +242,51 @@ def _simulate_core(
                             sl_price = new_sl
                     be_done = True
 
-            # 4. Trailing SL update (using previous bar body as reference)
-            if trailing_sl_enabled and n_trail_stages > 0 and i > 0:
-                # Current distance from entry
-                if direction == 1:
-                    current_dist = high_arr[i] - entry_price
-                else:
-                    current_dist = entry_price - low_arr[i]
+            # 4. Trailing SL update
+            if trailing_sl_enabled and i > 0:
+                if trail_mode_flag == 1 and be_done:
+                    # ST-line trailing: runner stop follows the SuperTrend line
+                    st_val = st_values_arr[i]
+                    if not np.isnan(st_val) and st_val > 0:
+                        if direction == 1:
+                            # For long: ST line is support, only ratchet up
+                            if st_val > sl_price:
+                                sl_price = st_val
+                        else:
+                            # For short: ST line is resistance, only ratchet down
+                            if st_val < sl_price:
+                                sl_price = st_val
 
-                # Check which stage we're in
-                new_stage = trail_stage
-                for s in range(n_trail_stages):
-                    stage_trigger_dist = initial_sl_distance * trail_triggers[s]
-                    if current_dist >= stage_trigger_dist:
-                        if s + 1 > new_stage:
-                            new_stage = s + 1
-
-                if new_stage > 0:
-                    trail_stage = new_stage
-                    mult = trail_mults[trail_stage - 1]
-                    trail_distance = initial_sl_distance * mult
-
-                    # Reference: previous bar body
-                    prev_body_top = max(open_arr[i - 1], close_arr[i - 1])
-                    prev_body_bot = min(open_arr[i - 1], close_arr[i - 1])
-
+                elif trail_mode_flag == 0 and n_trail_stages > 0:
+                    # ATR-stages trailing (previous bar body reference)
                     if direction == 1:
-                        new_sl = prev_body_bot - trail_distance
-                        # Only ratchet up
-                        if new_sl > sl_price:
-                            sl_price = new_sl
+                        current_dist = high_arr[i] - entry_price
                     else:
-                        new_sl = prev_body_top + trail_distance
-                        # Only ratchet down
-                        if new_sl < sl_price:
-                            sl_price = new_sl
+                        current_dist = entry_price - low_arr[i]
+
+                    new_stage = trail_stage
+                    for s in range(n_trail_stages):
+                        stage_trigger_dist = initial_sl_distance * trail_triggers[s]
+                        if current_dist >= stage_trigger_dist:
+                            if s + 1 > new_stage:
+                                new_stage = s + 1
+
+                    if new_stage > 0:
+                        trail_stage = new_stage
+                        mult = trail_mults[trail_stage - 1]
+                        trail_distance = initial_sl_distance * mult
+
+                        prev_body_top = max(open_arr[i - 1], close_arr[i - 1])
+                        prev_body_bot = min(open_arr[i - 1], close_arr[i - 1])
+
+                        if direction == 1:
+                            new_sl = prev_body_bot - trail_distance
+                            if new_sl > sl_price:
+                                sl_price = new_sl
+                        else:
+                            new_sl = prev_body_top + trail_distance
+                            if new_sl < sl_price:
+                                sl_price = new_sl
 
             # 5. Final TP check (for runner)
             if final_tp_r > 0:
@@ -419,6 +431,7 @@ def simulate(
     fees: float = 0.0001,
     risk_pct: float = 0.03,
     max_lot_value: float = 0.0,
+    st_values: pd.Series | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Run the advanced position management simulation.
 
@@ -451,6 +464,14 @@ def simulate(
         [ts.sl_multiplier for ts in config.trailing_stages], dtype=np.float64
     ) if n_trail_stages > 0 else np.empty(0, dtype=np.float64)
 
+    # Prepare ST values for trailing
+    if st_values is not None:
+        st_vals_arr = st_values.values.astype(np.float64)
+    else:
+        st_vals_arr = np.zeros(len(df), dtype=np.float64)
+
+    trail_mode_flag = 1 if config.trail_mode == "st_line" else 0
+
     equity, trades, n_trades = _simulate_core(
         open_arr=df["open"].values.astype(np.float64),
         high_arr=df["high"].values.astype(np.float64),
@@ -459,6 +480,8 @@ def simulate(
         entries_arr=entries.values.astype(np.bool_),
         exits_arr=exits.values.astype(np.bool_),
         sl_distance_arr=sl_distances.values.astype(np.float64),
+        st_values_arr=st_vals_arr,
+        trail_mode_flag=trail_mode_flag,
         n_partial_tps=n_partial_tps,
         pt_triggers=pt_triggers,
         pt_pcts=pt_pcts,

@@ -46,6 +46,11 @@ def run_backtest(
         # Custom simulator path
         sl_distances = strategy.compute_sl_distances(df, **effective_params)
 
+        # Get SuperTrend line values for ST-line trailing mode
+        st_values = None
+        if pm_config.trail_mode == "st_line" and hasattr(strategy, 'compute_supertrend_values'):
+            st_values = strategy.compute_supertrend_values(df, **effective_params)
+
         equity_arr, trade_records, n_trades = simulate(
             df=df,
             entries=entries,
@@ -56,6 +61,7 @@ def run_backtest(
             fees=fees,
             risk_pct=pm_config.risk_pct,
             max_lot_value=pm_config.max_lot_value,
+            st_values=st_values,
         )
 
         sim_result = build_simulation_result(

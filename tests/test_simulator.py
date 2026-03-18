@@ -219,6 +219,7 @@ class TestTrailingSL:
                 TrailingStageConfig(trigger_r=1.0, sl_multiplier=0.8),
             ],
             trailing_sl_enabled=True,
+            trail_mode="atr_stages",  # Explicitly test ATR-stages mode
             final_tp_r=0,
         )
         equity, trades, n = simulate(df, entries, exits, sl_dist, config, init_cash=10000)

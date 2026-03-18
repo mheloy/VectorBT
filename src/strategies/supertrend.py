@@ -173,11 +173,19 @@ def calc_supertrend(
 # ---------------------------------------------------------------------------
 
 
-def _h1_direction(df: pd.DataFrame, period: int, factor: float) -> pd.Series:
+def _h1_direction(
+    df: pd.DataFrame,
+    period: int = 50,
+    factor: float = 3.0,
+    source: str = "close",
+) -> pd.Series:
     """Resample to H1, compute SuperTrend, forward-fill direction to original index.
 
     Shifts H1 direction by 1 bar before forward-filling to avoid look-ahead bias
     (only act on completed H1 candles).
+
+    Uses separate params from M5 signal (slow macro filter by default:
+    P50/F3.0/close from backtst-engine's proven config).
     """
     h1 = df.resample("1h").agg(
         {"open": "first", "high": "max", "low": "min", "close": "last"}
@@ -187,7 +195,7 @@ def _h1_direction(df: pd.DataFrame, period: int, factor: float) -> pd.Series:
         # Not enough H1 data — return neutral (no filtering)
         return pd.Series(0, index=df.index, dtype=np.int8)
 
-    st = calc_supertrend(h1, period, factor)
+    st = calc_supertrend(h1, period, factor, source)
     # Shift by 1 so current hour uses previous hour's completed direction
     h1_dir = st["direction"].shift(1)
     return h1_dir.reindex(df.index, method="ffill").fillna(0).astype(np.int8)
@@ -213,15 +221,15 @@ class SuperTrendStrategy(BaseStrategy):
     def parameters(self) -> list[StrategyParam]:
         return [
             StrategyParam(
-                "period", default=16, min_val=5, max_val=50, step=1,
+                "period", default=15, min_val=5, max_val=50, step=1,
                 description="ATR period",
             ),
             StrategyParam(
-                "factor", default=1.4, min_val=0.5, max_val=5.0, step=0.1,
+                "factor", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
                 description="ATR multiplier",
             ),
             StrategyParam(
-                "source", default="hl2",
+                "source", default="hlc3",
                 choices=["hl2", "close", "hlc3", "ohlc4"],
                 description="Price source",
             ),
@@ -231,7 +239,20 @@ class SuperTrendStrategy(BaseStrategy):
                 description="H1 SuperTrend filter",
             ),
             StrategyParam(
-                "sl_atr_mult", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
+                "h1_period", default=50, min_val=10, max_val=100, step=1,
+                description="H1 filter period",
+            ),
+            StrategyParam(
+                "h1_factor", default=3.0, min_val=0.5, max_val=5.0, step=0.1,
+                description="H1 filter factor",
+            ),
+            StrategyParam(
+                "h1_source", default="close",
+                choices=["hl2", "close", "hlc3", "ohlc4"],
+                description="H1 filter source",
+            ),
+            StrategyParam(
+                "sl_atr_mult", default=2.5, min_val=0.5, max_val=5.0, step=0.1,
                 description="SL ATR multiplier",
             ),
             StrategyParam(
@@ -245,19 +266,19 @@ class SuperTrendStrategy(BaseStrategy):
                 description="Advanced position management (partial TP, BE, trailing)",
             ),
             StrategyParam(
-                "tp1_r", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
+                "tp1_r", default=0.5, min_val=0.1, max_val=5.0, step=0.1,
                 description="Partial TP1 R-multiple",
             ),
             StrategyParam(
-                "tp1_pct", default=0.50, min_val=0.1, max_val=0.9, step=0.05,
+                "tp1_pct", default=0.33, min_val=0.1, max_val=0.9, step=0.05,
                 description="TP1 close fraction",
             ),
             StrategyParam(
-                "tp2_r", default=2.9, min_val=1.0, max_val=8.0, step=0.1,
+                "tp2_r", default=1.5, min_val=0.5, max_val=8.0, step=0.1,
                 description="Partial TP2 R-multiple",
             ),
             StrategyParam(
-                "tp2_pct", default=0.30, min_val=0.1, max_val=0.5, step=0.05,
+                "tp2_pct", default=0.50, min_val=0.1, max_val=0.9, step=0.05,
                 description="TP2 close fraction",
             ),
             StrategyParam(
@@ -269,6 +290,11 @@ class SuperTrendStrategy(BaseStrategy):
                 description="Final TP R-multiple (runner)",
             ),
             StrategyParam(
+                "trail_mode", default="st_line",
+                choices=["st_line", "atr_stages"],
+                description="Runner trailing mode",
+            ),
+            StrategyParam(
                 "risk_pct", default=0.03, min_val=0.005, max_val=0.10, step=0.005,
                 description="Risk % per trade",
             ),
@@ -277,11 +303,14 @@ class SuperTrendStrategy(BaseStrategy):
     def generate_signals(
         self,
         df: pd.DataFrame,
-        period=16,
-        factor=1.4,
-        source="hl2",
+        period=15,
+        factor=1.5,
+        source="hlc3",
         h1_filter="On",
-        sl_atr_mult=1.5,
+        h1_period=50,
+        h1_factor=3.0,
+        h1_source="close",
+        sl_atr_mult=2.5,
         rr_ratio=3.0,
         **kwargs,
     ) -> tuple[pd.Series, pd.Series]:
@@ -293,8 +322,9 @@ class SuperTrendStrategy(BaseStrategy):
         exits = (direction == 1) & (direction.shift(1) == -1)
 
         # H1 filter: only enter long when H1 is in uptrend
+        # Uses separate slow params (P50/F3.0/close) for macro trend confirmation
         if str(h1_filter) == "On":
-            h1_dir = _h1_direction(df, int(period), float(factor))
+            h1_dir = _h1_direction(df, int(h1_period), float(h1_factor), str(h1_source))
             entries = entries & (h1_dir == -1)
 
         entries = entries.fillna(False).astype(bool)
@@ -302,9 +332,17 @@ class SuperTrendStrategy(BaseStrategy):
 
         return entries, exits
 
-    def position_management(self, adv_pm="Off", tp1_r=1.5, tp1_pct=0.50,
-                            tp2_r=2.9, tp2_pct=0.30, be_trigger_r=1.0,
-                            final_tp_r=3.0, risk_pct=0.03, **params):
+    def compute_supertrend_values(
+        self, df: pd.DataFrame, period=15, factor=1.5, source="hlc3", **params
+    ) -> pd.Series:
+        """Return the SuperTrend line values for ST-line trailing mode."""
+        st = calc_supertrend(df, int(period), float(factor), source)
+        return st["supertrend"]
+
+    def position_management(self, adv_pm="Off", tp1_r=0.5, tp1_pct=0.33,
+                            tp2_r=1.5, tp2_pct=0.50, be_trigger_r=1.0,
+                            final_tp_r=3.0, trail_mode="st_line",
+                            risk_pct=0.03, **params):
         """Return advanced PM config when enabled."""
         if str(adv_pm) != "On":
             return None
@@ -325,6 +363,7 @@ class SuperTrendStrategy(BaseStrategy):
             ],
             trailing_sl_enabled=True,
             final_tp_r=float(final_tp_r),
+            trail_mode=str(trail_mode),
             risk_pct=float(risk_pct),
         )
 

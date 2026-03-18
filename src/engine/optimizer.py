@@ -227,10 +227,15 @@ def _optimize_with_pm(
         pm_config = strategy.position_management(**full_params)
         sl_distances = strategy.compute_sl_distances(df, **full_params)
 
+        st_values = None
+        if pm_config.trail_mode == "st_line" and hasattr(strategy, 'compute_supertrend_values'):
+            st_values = strategy.compute_supertrend_values(df, **full_params)
+
         equity_arr, trade_records, n_trades = simulate(
             df=df, entries=entries, exits=exits, sl_distances=sl_distances,
             config=pm_config, init_cash=init_cash, fees=fees,
             risk_pct=pm_config.risk_pct, max_lot_value=pm_config.max_lot_value,
+            st_values=st_values,
         )
 
         sim_result = build_simulation_result(
