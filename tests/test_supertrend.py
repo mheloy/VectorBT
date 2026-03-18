@@ -210,8 +210,8 @@ class TestSuperTrendStrategy:
 
     def test_default_params(self):
         defaults = self.strategy.default_params()
-        assert defaults["period"] == 17
-        assert defaults["factor"] == 1.8
+        assert defaults["period"] == 20
+        assert defaults["factor"] == 1.2
         assert defaults["source"] == "hl2"
         assert defaults["atr_method"] == "sma"
         assert defaults["filter_type"] == "h1_supertrend"

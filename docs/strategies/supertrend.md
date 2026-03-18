@@ -26,17 +26,17 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 
 | Parameter | Default | Range | Step | Description |
 |-----------|---------|-------|------|-------------|
-| period | 17 | 5-50 | 1 | ATR period for SuperTrend bands |
-| factor | 1.8 | 0.5-5.0 | 0.1 | ATR multiplier for band width |
+| period | 20 | 5-50 | 1 | ATR period for SuperTrend bands |
+| factor | 1.2 | 0.5-5.0 | 0.1 | ATR multiplier for band width |
 | source | hl2 | hl2/close/hlc3/ohlc4 | - | Price source for band center |
 | atr_method | sma | sma/rma | - | ATR smoothing (sma=backtest-engine, rma=PineScript) |
 | filter_type | h1_supertrend | h1_supertrend/200ma/none | - | Trend filter: H1 SuperTrend, 200MA, or none (replaces h1_filter) |
 | direction_mode | both | both/long_only/short_only | - | Signal direction: bidirectional, long-only, or short-only |
 | ma_filter_period | 200 | 50-500 | 10 | Period for MA filter (when filter_type=200ma) |
 | ma_filter_type | SMA | SMA/EMA | - | MA type for 200MA filter |
-| sl_atr_mult | 1.9 | 0.5-5.0 | 0.1 | SL = ATR(14, entry TF) * multiplier |
+| sl_atr_mult | 1.0 | 0.5-5.0 | 0.1 | SL = ATR(14, entry TF) * multiplier |
 | rr_ratio | 3.0 | 1.0-5.0 | 0.5 | TP = SL * R:R ratio |
-| adv_pm | Off | On/Off | - | Advanced position management (partial TP, BE, trailing) |
+| adv_pm | On | On/Off | - | Advanced position management (partial TP, BE, trailing) |
 | tp1_r | 1.2 | 0.1-5.0 | 0.1 | Partial TP1 R-multiple trigger |
 | tp1_pct | 0.33 | 0.1-0.9 | 0.05 | TP1 close fraction of initial position |
 | tp2_r | 2.0 | 0.5-8.0 | 0.1 | Partial TP2 R-multiple trigger |

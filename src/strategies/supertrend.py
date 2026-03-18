@@ -243,11 +243,11 @@ class SuperTrendStrategy(BaseStrategy):
     def parameters(self) -> list[StrategyParam]:
         return [
             StrategyParam(
-                "period", default=17, min_val=5, max_val=50, step=1,
+                "period", default=20, min_val=5, max_val=50, step=1,
                 description="ATR period",
             ),
             StrategyParam(
-                "factor", default=1.8, min_val=0.5, max_val=5.0, step=0.1,
+                "factor", default=1.2, min_val=0.5, max_val=5.0, step=0.1,
                 description="ATR multiplier",
             ),
             StrategyParam(
@@ -280,7 +280,7 @@ class SuperTrendStrategy(BaseStrategy):
                 description="MA filter smoothing (used when filter_type=200ma)",
             ),
             StrategyParam(
-                "sl_atr_mult", default=1.9, min_val=0.5, max_val=5.0, step=0.1,
+                "sl_atr_mult", default=1.0, min_val=0.5, max_val=5.0, step=0.1,
                 description="SL ATR multiplier",
             ),
             StrategyParam(
@@ -289,7 +289,7 @@ class SuperTrendStrategy(BaseStrategy):
             ),
             # Position management params
             StrategyParam(
-                "adv_pm", default="Off",
+                "adv_pm", default="On",
                 choices=["On", "Off"],
                 description="Advanced position management (partial TP, BE, trailing)",
             ),
@@ -331,15 +331,15 @@ class SuperTrendStrategy(BaseStrategy):
     def generate_signals(
         self,
         df: pd.DataFrame,
-        period=17,
-        factor=1.8,
+        period=20,
+        factor=1.2,
         source="hl2",
         atr_method="sma",
         filter_type="h1_supertrend",
         direction_mode="both",
         ma_filter_period=200,
         ma_filter_type="SMA",
-        sl_atr_mult=1.9,
+        sl_atr_mult=1.0,
         rr_ratio=3.0,
         **kwargs,
     ) -> "SignalResult":
@@ -398,7 +398,7 @@ class SuperTrendStrategy(BaseStrategy):
         )
 
     def compute_supertrend_values(
-        self, df: pd.DataFrame, period=17, factor=1.8, source="hl2",
+        self, df: pd.DataFrame, period=20, factor=1.2, source="hl2",
         atr_method="sma", **params
     ) -> pd.Series:
         """Return the SuperTrend line values for ST-line trailing mode."""
@@ -438,7 +438,7 @@ class SuperTrendStrategy(BaseStrategy):
         )
 
     def compute_sl_distances(
-        self, df: pd.DataFrame, sl_atr_mult=1.9, atr_method="sma", **params
+        self, df: pd.DataFrame, sl_atr_mult=1.0, atr_method="sma", **params
     ) -> pd.Series:
         """Compute per-bar SL distance in dollars (1R = ATR(14) * sl_atr_mult).
 
@@ -461,7 +461,7 @@ class SuperTrendStrategy(BaseStrategy):
         return sl_dollars
 
     def compute_stops(
-        self, df: pd.DataFrame, sl_atr_mult=1.9, rr_ratio=3.0,
+        self, df: pd.DataFrame, sl_atr_mult=1.0, rr_ratio=3.0,
         atr_method="sma", **params
     ) -> tuple[pd.Series, pd.Series] | None:
         """Compute per-bar SL/TP from ATR(14) on entry timeframe.
