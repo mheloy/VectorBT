@@ -15,8 +15,12 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 ## Signal Rules
 
 - **Entry (long)**: Direction flips from +1 to -1 (downtrend -> uptrend)
-- **Exit**: Direction flips from -1 to +1 (uptrend -> downtrend)
-- **H1 Filter**: When enabled, only enters long if H1 SuperTrend is also in uptrend (-1)
+- **Entry (short)**: Direction flips from -1 to +1 (uptrend -> downtrend) — enabled via `direction_mode=both` or `short_only`
+- **Exit (long)**: Direction flips from -1 to +1 (uptrend -> downtrend)
+- **Exit (short)**: Direction flips from +1 to -1 (downtrend -> uptrend)
+- **H1 SuperTrend Filter** (`filter_type=h1_supertrend`): Only enters long if H1 SuperTrend is uptrend, short if downtrend
+- **200MA Filter** (`filter_type=200ma`): Only enters long if price > 200MA, short if price < 200MA
+- **Warmup Guard**: Suppresses all signals during first `max(period, 14) + 1` bars to avoid indicator instability
 
 ## Parameters
 
@@ -26,7 +30,10 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 | factor | 1.8 | 0.5-5.0 | 0.1 | ATR multiplier for band width |
 | source | hl2 | hl2/close/hlc3/ohlc4 | - | Price source for band center |
 | atr_method | sma | sma/rma | - | ATR smoothing (sma=backtest-engine, rma=PineScript) |
-| h1_filter | On | On/Off | - | H1 timeframe confirmation filter (uses same params as entry) |
+| filter_type | h1_supertrend | h1_supertrend/200ma/none | - | Trend filter: H1 SuperTrend, 200MA, or none (replaces h1_filter) |
+| direction_mode | both | both/long_only/short_only | - | Signal direction: bidirectional, long-only, or short-only |
+| ma_filter_period | 200 | 50-500 | 10 | Period for MA filter (when filter_type=200ma) |
+| ma_filter_type | SMA | SMA/EMA | - | MA type for 200MA filter |
 | sl_atr_mult | 1.9 | 0.5-5.0 | 0.1 | SL = ATR(14, entry TF) * multiplier |
 | rr_ratio | 3.0 | 1.0-5.0 | 0.5 | TP = SL * R:R ratio |
 | adv_pm | Off | On/Off | - | Advanced position management (partial TP, BE, trailing) |
@@ -68,11 +75,12 @@ Custom Numba JIT bar-by-bar simulator replicating the live MT5 bot's position ma
 | 2026-03-18 | ATR method | Wilder's RMA | SMA (rolling mean) | Aligned with backtest-engine. SMA is default, RMA available via atr_method param |
 | 2026-03-18 | SL ATR timeframe | Resampled to M15 | Entry timeframe (e.g. M5) | Aligned with backtest-engine: ATR(14) computed on entry TF, not resampled |
 | 2026-03-18 | Defaults | P16/F1.4/hlc3/sl1.5/tp1:0.5R/tp2:1.5R | P17/F1.8/hl2/sl1.9/tp1:1.2R/tp2:2.0R | Aligned with profitable backtest-engine config |
+| 2026-03-19 | Signals & Filters | long-only, h1_filter | bidirectional, filter_type | Added bidirectional (long+short) signals, 200MA filter, direction_mode, warmup guard. Replaced h1_filter with filter_type. Added slippage (0.000004) and calibrated fees (0.000006) from ECN trade data ($3/lot commission + 4pt spread). Next-bar-open execution default. Hold-out set in WFA. |
 
 ## Notes
 
 - H1 filter uses shift(1) before forward-fill to avoid look-ahead bias (only acts on completed H1 candles).
-- Long-only for now. The live bot generates both BUY and SELL signals but only long is implemented here for consistency with other strategies.
+- Bidirectional signals (long+short) now supported. Use `direction_mode` to control: `both` (default), `long_only`, `short_only`.
 - When `adv_pm=On`, the VBT `from_signals()` path is bypassed entirely — all position management is handled by the custom simulator in `src/engine/simulator.py`.
 - The simulator within-bar execution order is conservative: SL checked first, then partials, then BE, trailing, final TP, signal exit. When SL and TP could both trigger on the same bar, SL takes priority.
 - Live bot uses M1 candle body for trailing reference; backtester uses the previous bar at whatever timeframe is selected (simplification due to bar-level simulation).

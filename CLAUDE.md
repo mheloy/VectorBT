@@ -18,7 +18,7 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - **MA Crossover** (`ma_crossover.py`): Fast/slow MA crossover with SMA/EMA choice
 - **RSI Reversal** (`rsi_reversal.py`): RSI oversold/overbought reversals
 - **Bollinger Breakout** (`bollinger_breakout.py`): Bollinger Bands upper/lower breakout
-- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with optional H1 filter and ATR-based dynamic SL/TP. Ported from live MT5 bot. Supports advanced position management (partial TP, break-even, trailing SL) via custom Numba simulator. ATR uses SMA by default (matching backtest-engine; RMA/Wilder's available via `atr_method` param). SL uses ATR(14) on entry timeframe (not resampled). Defaults: period=17, factor=1.8, source=hl2, atr_method=sma, sl_atr_mult=1.9, tp1_r=1.2, tp2_r=2.0. See `docs/strategies/supertrend.md` for parameter history.
+- **SuperTrend** (`supertrend.py`): SuperTrend trend-following with bidirectional (long+short) signals and ATR-based dynamic SL/TP. Ported from live MT5 bot. `filter_type` controls trend confirmation (h1_supertrend, 200ma, or none — replaces old `h1_filter`). `direction_mode` controls signal direction (both/long_only/short_only). 200MA filter available as alternative to H1 SuperTrend. Supports advanced position management (partial TP, break-even, trailing SL) via custom Numba simulator. ATR uses SMA by default (matching backtest-engine; RMA/Wilder's available via `atr_method` param). SL uses ATR(14) on entry timeframe (not resampled). Defaults: period=17, factor=1.8, source=hl2, atr_method=sma, sl_atr_mult=1.9, tp1_r=1.2, tp2_r=2.0. See `docs/strategies/supertrend.md` for parameter history.
 
 ## Key Patterns
 - Strategies return boolean pd.Series for entries/exits — VectorBT handles position management
@@ -26,7 +26,8 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - Strategies can optionally override `position_management(**params)` to enable advanced PM (partial TP, break-even, trailing SL) — routes to custom Numba simulator instead of VBT
 - **Dual-path runner**: `run_backtest()` returns `BacktestResult` which wraps either VBT Portfolio (simple strategies) or `SimulationResult` (PM strategies) with a unified interface
 - Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call (or per-combo simulation for PM strategies)
-- Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage
+- Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage; supports hold-out set (last 10% of data by default)
+- Warmup guard suppresses signals during first `max(period, 14) + 1` bars to avoid indicator instability
 - Monte Carlo, regime analysis, and robustness testing are custom implementations (not in VBT open-source)
 - `StrategyParam` dataclass drives both dashboard sliders and optimizer grid ranges
 
@@ -36,7 +37,9 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - Resampling: 5M/15M/30M/1H/4H/D via pandas resample
 
 ## Conventions
-- Fees default: `0.0001` (1bp per side)
+- Fees default: `0.000006` (ECN commission fraction, ~$3/lot at $5000 gold)
+- Slippage default: `0.000004` (half-spread fraction, ~4pt spread on XAUUSD)
+- Execution: next-bar-open (default, realistic); same-bar-close available for comparison
 - Init cash default: `$10,000`
 - Frequency strings for VBT: `{"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}`
 - Gold sessions (GMT): Asian 23:00-07:00, London 08:00-16:00, NY 13:00-21:00
