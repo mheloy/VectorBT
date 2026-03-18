@@ -22,7 +22,12 @@ def load_m5(data_dir: str | None = None, use_cache: bool = True) -> pd.DataFrame
     cache_path = CACHE_DIR / "xauusd_m5_combined.parquet"
 
     if use_cache and cache_path.exists():
-        return pd.read_parquet(cache_path)
+        # Auto-invalidate cache if any CSV is newer or CSV count changed
+        csv_files = sorted(glob.glob(os.path.join(data_dir, "XAUUSD_M5_*.csv")))
+        cache_mtime = cache_path.stat().st_mtime
+        csvs_newer = any(os.path.getmtime(f) > cache_mtime for f in csv_files)
+        if not csvs_newer:
+            return pd.read_parquet(cache_path)
 
     csv_files = sorted(glob.glob(os.path.join(data_dir, "XAUUSD_M5_*.csv")))
     if not csv_files:
