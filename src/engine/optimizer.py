@@ -35,7 +35,7 @@ def optimize(
     sweep_params: dict[str, list],
     metric: str = "sharpe_ratio",
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
     sl_stop: float | None = None,
     tp_stop: float | None = None,

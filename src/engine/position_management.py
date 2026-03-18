@@ -11,8 +11,8 @@ from dataclasses import dataclass, field
 class PartialTPConfig:
     """Configuration for a single partial take-profit level."""
 
-    trigger_r: float  # R-multiple threshold to trigger (e.g., 1.5)
-    close_pct: float  # Fraction of *initial* position to close (e.g., 0.50 = 50%)
+    trigger_r: float  # R-multiple threshold to trigger (e.g., 1.2)
+    close_pct: float  # Fraction to close: of initial (TP1) or of remaining (TP2+)
 
 
 @dataclass
@@ -33,15 +33,15 @@ class PositionManagementConfig:
 
     # Partial take profits (ordered by trigger level)
     partial_tps: list[PartialTPConfig] = field(default_factory=lambda: [
-        PartialTPConfig(trigger_r=1.5, close_pct=0.50),  # TP1: 50% at 1.5R
-        PartialTPConfig(trigger_r=2.9, close_pct=0.30),  # TP2: 30% at 2.9R
+        PartialTPConfig(trigger_r=1.2, close_pct=0.33),  # TP1: 33% of initial at 1.2R
+        PartialTPConfig(trigger_r=2.0, close_pct=0.50),  # TP2: 50% of remaining at 2.0R
     ])
     partial_tp_enabled: bool = True
 
     # Break-even
     be_enabled: bool = True
     be_trigger_r: float = 1.0  # R-multiple to trigger BE move
-    be_offset_dollars: float = 1.0  # SL moves to entry + this offset ($)
+    be_offset_dollars: float = 0.0  # SL moves to entry + this offset ($)
 
     # Trailing stop loss stages (ordered by trigger level)
     trailing_stages: list[TrailingStageConfig] = field(default_factory=lambda: [
@@ -51,8 +51,8 @@ class PositionManagementConfig:
     ])
     trailing_sl_enabled: bool = True
 
-    # Final take profit for the runner portion
-    final_tp_r: float = 3.0
+    # Final take profit for the runner portion (0 = no cap, trails ST line only)
+    final_tp_r: float = 0.0
 
     # Runner trailing mode: "st_line" (trail SuperTrend line) or "atr_stages" (3-stage ATR)
     trail_mode: str = "st_line"

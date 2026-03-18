@@ -55,7 +55,7 @@ def run_walk_forward(
     min_trades: int = 3,
     metric: str = "sharpe_ratio",
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
     progress_cb=None,
 ) -> WalkForwardResult:

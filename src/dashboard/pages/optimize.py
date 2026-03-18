@@ -139,7 +139,7 @@ target_metric = st.sidebar.selectbox("Optimize for", metric_options, key="opt_me
 # Settings
 st.sidebar.markdown("---")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="opt_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="opt_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="opt_fees")
 
 # Combo count
 n_combos = len(sweep_x_values)

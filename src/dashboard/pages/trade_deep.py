@@ -35,7 +35,7 @@ for p in strategy.parameters():
         param_values[p.name] = st.sidebar.number_input(p.description or p.name, value=p.default, key=f"td_{p.name}")
 
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="td_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="td_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="td_fees")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 

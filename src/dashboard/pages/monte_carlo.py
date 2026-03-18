@@ -40,7 +40,7 @@ st.sidebar.subheader("Monte Carlo Settings")
 n_sims = st.sidebar.slider("Simulations", 100, 5000, 1000, 100, key="mc_nsims")
 ruin_pct = st.sidebar.slider("Ruin threshold (%)", 10, 80, 50, 5, key="mc_ruin")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="mc_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="mc_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="mc_fees")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 

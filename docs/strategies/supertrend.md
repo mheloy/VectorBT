@@ -35,7 +35,7 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 | tp2_r | 2.0 | 0.5-8.0 | 0.1 | Partial TP2 R-multiple trigger |
 | tp2_pct | 0.50 | 0.1-0.9 | 0.05 | TP2 close fraction of initial position |
 | be_trigger_r | 1.0 | 0.3-3.0 | 0.1 | Break-even trigger R-multiple |
-| final_tp_r | 3.0 | 1.5-10.0 | 0.5 | Final TP R-multiple for runner portion |
+| final_tp_r | 0.0 | 0.0-10.0 | 0.5 | Final TP R-multiple (0=no cap, trails ST line only) |
 
 ## Risk Management
 

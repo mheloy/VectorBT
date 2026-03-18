@@ -25,7 +25,7 @@ class BacktestRun:
     max_drawdown_pct: float = 0.0
     total_trades: int = 0
     init_cash: float = 10000.0
-    fees: float = 0.0001
+    fees: float = 0.0
     sl_stop: float | None = None
     tp_stop: float | None = None
 

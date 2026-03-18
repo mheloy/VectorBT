@@ -49,7 +49,7 @@ anchored = st.sidebar.checkbox("Anchored IS (expanding window)", value=False, ke
 min_trades = st.sidebar.slider("Min trades per IS window", 1, 20, 3, key="wf_min_trades")
 metric = st.sidebar.selectbox("Optimization metric", ["sharpe_ratio", "total_return", "sortino_ratio", "profit_factor", "calmar_ratio"], key="wf_metric")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="wf_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="wf_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="wf_fees")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 

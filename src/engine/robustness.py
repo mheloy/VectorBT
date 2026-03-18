@@ -27,7 +27,7 @@ def test_signal_delay(
     params: dict,
     delays: list[int] | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
 ) -> pd.DataFrame:
     """Test strategy with delayed entry/exit signals.
@@ -89,7 +89,7 @@ def test_noise_injection(
     noise_levels: list[float] | None = None,
     n_trials: int = 20,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -142,7 +142,7 @@ def test_param_sensitivity(
     param_name: str,
     perturbations: list[float] | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
 ) -> pd.DataFrame:
     """Test how sensitive the strategy is to small changes in a parameter.

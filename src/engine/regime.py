@@ -197,7 +197,7 @@ def backtest_by_regime(
     regime_result: RegimeResult,
     selected_regimes: list[int] | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
 ) -> RegimeBacktestResult:
     """Run backtest filtered by regime.
