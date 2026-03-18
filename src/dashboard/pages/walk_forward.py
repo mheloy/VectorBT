@@ -48,9 +48,12 @@ for p in numeric_params:
         f"{p.name} range", p.min_val, p.max_val, (lo, hi),
         step=p.step or 1, key=f"wf_{p.name}",
     )
+    # Ensure all number_input args are the same type (Streamlit requirement)
+    def_step = float(def_step)
+    min_step = float(p.step or 0.1)
     step = st.sidebar.number_input(
         f"{p.name} step", value=def_step,
-        min_value=float(p.step or 0.1), step=0.1, format="%.4f",
+        min_value=min_step, step=0.1, format="%.4f",
         key=f"wf_{p.name}_step",
     )
     if isinstance(step, float) and step != int(step):
