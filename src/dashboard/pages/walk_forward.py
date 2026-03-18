@@ -24,8 +24,9 @@ timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index
 st.sidebar.markdown("---")
 st.sidebar.subheader("Sweep Parameters")
 
-# Default sweep config for SuperTrend (centered on profitable backtest-engine params)
-_WF_DEFAULTS = {
+# Params to sweep in WFA (signal + SL only, matching backtest-engine approach).
+# Other params (TP levels, BE, risk_pct) are kept fixed at defaults.
+_WF_SWEEP_PARAMS = {
     "period":      {"range": (15, 19), "step": 2},
     "factor":      {"range": (1.5, 2.1), "step": 0.3},
     "sl_atr_mult": {"range": (1.5, 2.3), "step": 0.4},
@@ -33,23 +34,21 @@ _WF_DEFAULTS = {
 
 numeric_params = [p for p in strategy.parameters() if p.min_val is not None]
 sweep_params = {}
+
+# Show swept params with range/step controls
+st.sidebar.caption("Swept in WFA (signal + SL)")
 for p in numeric_params:
-    wf_def = _WF_DEFAULTS.get(p.name)
-    if wf_def:
-        # Use WFA-specific defaults (range + step)
-        lo = max(p.min_val, wf_def["range"][0])
-        hi = min(p.max_val, wf_def["range"][1])
-        def_step = wf_def["step"]
-    else:
-        lo, hi = p.min_val, p.max_val
-        def_step = float(p.step or 5)
+    if p.name not in _WF_SWEEP_PARAMS:
+        continue
+    wf_def = _WF_SWEEP_PARAMS[p.name]
+    lo = max(p.min_val, wf_def["range"][0])
+    hi = min(p.max_val, wf_def["range"][1])
 
     vals = st.sidebar.slider(
         f"{p.name} range", p.min_val, p.max_val, (lo, hi),
         step=p.step or 1, key=f"wf_{p.name}",
     )
-    # Ensure all number_input args are the same type (Streamlit requirement)
-    def_step = float(def_step)
+    def_step = float(wf_def["step"])
     min_step = float(p.step or 0.1)
     step = st.sidebar.number_input(
         f"{p.name} step", value=def_step,
@@ -65,6 +64,16 @@ for p in numeric_params:
         sweep_params[p.name] = sweep_vals
     else:
         sweep_params[p.name] = list(range(int(vals[0]), int(vals[1]) + 1, int(step)))
+
+# Show fixed params (held at defaults, not swept)
+fixed_names = [p.name for p in numeric_params if p.name not in _WF_SWEEP_PARAMS]
+if fixed_names:
+    with st.sidebar.expander("Fixed params (not swept)", expanded=False):
+        defaults = strategy.default_params()
+        for p in numeric_params:
+            if p.name in _WF_SWEEP_PARAMS:
+                continue
+            st.text(f"{p.name} = {defaults.get(p.name, p.default)}")
 
 # Force adv_pm=On for SuperTrend PM path
 if "adv_pm" in {p.name for p in strategy.parameters()}:
