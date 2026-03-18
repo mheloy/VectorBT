@@ -74,8 +74,9 @@ def _simulate_core(
     fees,
     init_cash,
     ignore_signal_exits,
-    risk_pct,       # % of equity to risk per trade (e.g., 0.03 = 3%)
-    max_lot_value,  # Max notional per trade in $ (0 = no limit)
+    risk_pct,          # % of equity to risk per trade (e.g., 0.03 = 3%)
+    max_lot_value,     # Max notional per trade in $ (0 = no limit)
+    fixed_lot_units,   # Fixed lot size in units (>0 overrides risk-based sizing)
 ):
     """Core Numba-JIT simulation loop.
 
@@ -176,7 +177,13 @@ def _simulate_core(
 
                     if triggered:
                         exit_price = trigger_price
-                        close_frac = pt_pcts[p]
+                        if p == 0:
+                            # TP1: fraction of initial position
+                            close_frac = pt_pcts[p]
+                        else:
+                            # TP2+: fraction of remaining position
+                            # (matches backtest-engine behaviour)
+                            close_frac = position_fraction * pt_pcts[p]
                         if close_frac > position_fraction:
                             close_frac = position_fraction
 
@@ -288,8 +295,8 @@ def _simulate_core(
                             if new_sl < sl_price:
                                 sl_price = new_sl
 
-            # 5. Final TP check (for runner)
-            if final_tp_r > 0:
+            # 5. Final TP check (for runner) — skip if final_tp_r <= 0 (no cap)
+            if final_tp_r > 1e-9:
                 final_tp_price = entry_price + direction * initial_sl_distance * final_tp_r
                 final_tp_hit = False
                 if direction == 1:
@@ -367,18 +374,21 @@ def _simulate_core(
                     sl_price = entry_price - sl_dist  # Long: SL below
                     tp_price = entry_price + sl_dist * final_tp_r
 
-                    # Risk-based position sizing (leveraged)
-                    # num_units = how many oz of gold to buy
-                    # At SL, loss = sl_dist * num_units = risk_pct * equity
-                    # So: num_units = (equity * risk_pct) / sl_dist
-                    current_equity = cash
-                    initial_units = (current_equity * risk_pct) / sl_dist
+                    # Position sizing
+                    if fixed_lot_units > 0:
+                        # Fixed lot mode (matches backtst-engine --fixed-lots)
+                        initial_units = fixed_lot_units
+                    else:
+                        # Risk-based position sizing (leveraged)
+                        # At SL, loss = sl_dist * num_units = risk_pct * equity
+                        current_equity = cash
+                        initial_units = (current_equity * risk_pct) / sl_dist
 
-                    # Cap at max lot (1 lot = 100 oz for gold)
-                    if max_lot_value > 0:
-                        max_units = max_lot_value / entry_price
-                        if initial_units > max_units:
-                            initial_units = max_units
+                        # Cap at max lot
+                        if max_lot_value > 0:
+                            max_units = max_lot_value / entry_price
+                            if initial_units > max_units:
+                                initial_units = max_units
 
                     # Entry fee based on notional
                     fee_cost = initial_units * entry_price * fees
@@ -428,10 +438,11 @@ def simulate(
     sl_distances: pd.Series,
     config: PositionManagementConfig,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     risk_pct: float = 0.03,
     max_lot_value: float = 0.0,
     st_values: pd.Series | None = None,
+    fixed_lot_units: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Run the advanced position management simulation.
 
@@ -499,6 +510,7 @@ def simulate(
         ignore_signal_exits=True,  # PM handles all exits; don't close on signal flip
         risk_pct=risk_pct,
         max_lot_value=max_lot_value,
+        fixed_lot_units=fixed_lot_units,
     )
 
     return equity, trades[:n_trades], n_trades

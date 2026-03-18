@@ -85,16 +85,25 @@ def _rma(series: pd.Series, period: int) -> pd.Series:
     return pd.Series(result, index=series.index)
 
 
-def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """ATR using Wilder's RMA smoothing."""
-    return _rma(_true_range(df), period)
+def _atr(df: pd.DataFrame, period: int = 14, method: str = "sma") -> pd.Series:
+    """ATR using SMA or Wilder's RMA smoothing.
+
+    method='sma' matches backtest-engine (rolling mean of TR).
+    method='rma' matches PineScript's ta.rma().
+    """
+    tr = _true_range(df)
+    if method == "rma":
+        return _rma(tr, period)
+    # SMA (default) — matches backtest-engine
+    return tr.rolling(window=period, min_periods=period).mean()
 
 
 def calc_supertrend(
     df: pd.DataFrame,
-    period: int = 16,
-    factor: float = 1.4,
+    period: int = 17,
+    factor: float = 1.8,
     source: str = "hl2",
+    atr_method: str = "sma",
 ) -> pd.DataFrame:
     """Calculate SuperTrend indicator.
 
@@ -102,7 +111,7 @@ def calc_supertrend(
     direction: -1 = uptrend (BUY), +1 = downtrend (SELL)
     """
     src = _price_source(df, source)
-    spread = _atr(df, period)
+    spread = _atr(df, period, method=atr_method)
 
     upper_band = src + factor * spread
     lower_band = src - factor * spread
@@ -175,17 +184,18 @@ def calc_supertrend(
 
 def _h1_direction(
     df: pd.DataFrame,
-    period: int = 50,
-    factor: float = 3.0,
-    source: str = "close",
+    period: int = 17,
+    factor: float = 1.8,
+    source: str = "hl2",
+    atr_method: str = "sma",
 ) -> pd.Series:
     """Resample to H1, compute SuperTrend, forward-fill direction to original index.
 
     Shifts H1 direction by 1 bar before forward-filling to avoid look-ahead bias
     (only act on completed H1 candles).
 
-    Uses separate params from M5 signal (slow macro filter by default:
-    P50/F3.0/close from backtst-engine's proven config).
+    Uses the SAME period/factor/source/atr_method as the entry signal (matches
+    live bot and backtest-engine behaviour).
     """
     h1 = df.resample("1h").agg(
         {"open": "first", "high": "max", "low": "min", "close": "last"}
@@ -195,7 +205,7 @@ def _h1_direction(
         # Not enough H1 data — return neutral (no filtering)
         return pd.Series(0, index=df.index, dtype=np.int8)
 
-    st = calc_supertrend(h1, period, factor, source)
+    st = calc_supertrend(h1, period, factor, source, atr_method=atr_method)
     # Shift by 1 so current hour uses previous hour's completed direction
     h1_dir = st["direction"].shift(1)
     return h1_dir.reindex(df.index, method="ffill").fillna(0).astype(np.int8)
@@ -221,17 +231,22 @@ class SuperTrendStrategy(BaseStrategy):
     def parameters(self) -> list[StrategyParam]:
         return [
             StrategyParam(
-                "period", default=15, min_val=5, max_val=50, step=1,
+                "period", default=17, min_val=5, max_val=50, step=1,
                 description="ATR period",
             ),
             StrategyParam(
-                "factor", default=1.5, min_val=0.5, max_val=5.0, step=0.1,
+                "factor", default=1.8, min_val=0.5, max_val=5.0, step=0.1,
                 description="ATR multiplier",
             ),
             StrategyParam(
-                "source", default="hlc3",
+                "source", default="hl2",
                 choices=["hl2", "close", "hlc3", "ohlc4"],
                 description="Price source",
+            ),
+            StrategyParam(
+                "atr_method", default="sma",
+                choices=["sma", "rma"],
+                description="ATR smoothing (sma=backtest-engine, rma=PineScript)",
             ),
             StrategyParam(
                 "h1_filter", default="On",
@@ -239,20 +254,7 @@ class SuperTrendStrategy(BaseStrategy):
                 description="H1 SuperTrend filter",
             ),
             StrategyParam(
-                "h1_period", default=50, min_val=10, max_val=100, step=1,
-                description="H1 filter period",
-            ),
-            StrategyParam(
-                "h1_factor", default=3.0, min_val=0.5, max_val=5.0, step=0.1,
-                description="H1 filter factor",
-            ),
-            StrategyParam(
-                "h1_source", default="close",
-                choices=["hl2", "close", "hlc3", "ohlc4"],
-                description="H1 filter source",
-            ),
-            StrategyParam(
-                "sl_atr_mult", default=2.5, min_val=0.5, max_val=5.0, step=0.1,
+                "sl_atr_mult", default=1.9, min_val=0.5, max_val=5.0, step=0.1,
                 description="SL ATR multiplier",
             ),
             StrategyParam(
@@ -266,7 +268,7 @@ class SuperTrendStrategy(BaseStrategy):
                 description="Advanced position management (partial TP, BE, trailing)",
             ),
             StrategyParam(
-                "tp1_r", default=0.5, min_val=0.1, max_val=5.0, step=0.1,
+                "tp1_r", default=1.2, min_val=0.1, max_val=5.0, step=0.1,
                 description="Partial TP1 R-multiple",
             ),
             StrategyParam(
@@ -274,7 +276,7 @@ class SuperTrendStrategy(BaseStrategy):
                 description="TP1 close fraction",
             ),
             StrategyParam(
-                "tp2_r", default=1.5, min_val=0.5, max_val=8.0, step=0.1,
+                "tp2_r", default=2.0, min_val=0.5, max_val=8.0, step=0.1,
                 description="Partial TP2 R-multiple",
             ),
             StrategyParam(
@@ -286,8 +288,8 @@ class SuperTrendStrategy(BaseStrategy):
                 description="Break-even trigger R-multiple",
             ),
             StrategyParam(
-                "final_tp_r", default=3.0, min_val=1.5, max_val=10.0, step=0.5,
-                description="Final TP R-multiple (runner)",
+                "final_tp_r", default=0.0, min_val=0.0, max_val=10.0, step=0.5,
+                description="Final TP R-multiple (0=no cap, trails ST line only)",
             ),
             StrategyParam(
                 "trail_mode", default="st_line",
@@ -303,28 +305,27 @@ class SuperTrendStrategy(BaseStrategy):
     def generate_signals(
         self,
         df: pd.DataFrame,
-        period=15,
-        factor=1.5,
-        source="hlc3",
+        period=17,
+        factor=1.8,
+        source="hl2",
+        atr_method="sma",
         h1_filter="On",
-        h1_period=50,
-        h1_factor=3.0,
-        h1_source="close",
-        sl_atr_mult=2.5,
+        sl_atr_mult=1.9,
         rr_ratio=3.0,
         **kwargs,
     ) -> tuple[pd.Series, pd.Series]:
-        st = calc_supertrend(df, int(period), float(factor), source)
+        st = calc_supertrend(df, int(period), float(factor), source,
+                             atr_method=str(atr_method))
         direction = st["direction"]
 
         # Direction change signals
         entries = (direction == -1) & (direction.shift(1) == 1)
         exits = (direction == 1) & (direction.shift(1) == -1)
 
-        # H1 filter: only enter long when H1 is in uptrend
-        # Uses separate slow params (P50/F3.0/close) for macro trend confirmation
+        # H1 filter: same period/factor/source/atr_method as entry signal
         if str(h1_filter) == "On":
-            h1_dir = _h1_direction(df, int(h1_period), float(h1_factor), str(h1_source))
+            h1_dir = _h1_direction(df, int(period), float(factor), str(source),
+                                   atr_method=str(atr_method))
             entries = entries & (h1_dir == -1)
 
         entries = entries.fillna(False).astype(bool)
@@ -333,16 +334,19 @@ class SuperTrendStrategy(BaseStrategy):
         return entries, exits
 
     def compute_supertrend_values(
-        self, df: pd.DataFrame, period=15, factor=1.5, source="hlc3", **params
+        self, df: pd.DataFrame, period=17, factor=1.8, source="hl2",
+        atr_method="sma", **params
     ) -> pd.Series:
         """Return the SuperTrend line values for ST-line trailing mode."""
-        st = calc_supertrend(df, int(period), float(factor), source)
+        st = calc_supertrend(df, int(period), float(factor), source,
+                             atr_method=str(atr_method))
         return st["supertrend"]
 
-    def position_management(self, adv_pm="Off", tp1_r=0.5, tp1_pct=0.33,
-                            tp2_r=1.5, tp2_pct=0.50, be_trigger_r=1.0,
-                            final_tp_r=3.0, trail_mode="st_line",
-                            risk_pct=0.03, **params):
+    def position_management(self, adv_pm="Off", tp1_r=1.2, tp1_pct=0.33,
+                            tp2_r=2.0, tp2_pct=0.50, be_trigger_r=1.0,
+                            final_tp_r=0.0, trail_mode="st_line",
+                            sizing_mode="risk_pct", risk_pct=0.03,
+                            fixed_lot_units=1.0, **params):
         """Return advanced PM config when enabled."""
         if str(adv_pm) != "On":
             return None
@@ -364,46 +368,28 @@ class SuperTrendStrategy(BaseStrategy):
             trailing_sl_enabled=True,
             final_tp_r=float(final_tp_r),
             trail_mode=str(trail_mode),
+            sizing_mode=str(sizing_mode),
             risk_pct=float(risk_pct),
+            fixed_lot_units=float(fixed_lot_units),
         )
 
     def compute_sl_distances(
-        self, df: pd.DataFrame, sl_atr_mult=1.5, **params
+        self, df: pd.DataFrame, sl_atr_mult=1.9, atr_method="sma", **params
     ) -> pd.Series:
         """Compute per-bar SL distance in dollars (1R = ATR(14) * sl_atr_mult).
 
-        Uses M15 ATR when data is finer than M15 (e.g., 5M).
-        Uses the data's own timeframe ATR when data is M15 or coarser (e.g., 1H, 4H).
+        Uses ATR(14) on the entry timeframe directly (matches backtest-engine).
+        E.g. M5 data → ATR(14) on M5, M15 data → ATR(14) on M15, etc.
         """
         sl_atr_mult = float(sl_atr_mult)
+        atr_method = str(atr_method)
 
-        # Detect data frequency to decide whether to resample
-        if len(df) >= 2:
-            median_gap = (df.index[1:] - df.index[:-1]).median()
-            data_minutes = median_gap.total_seconds() / 60
-        else:
-            data_minutes = 5  # default
-
-        if data_minutes < 15:
-            # Data is finer than M15 — resample to M15 for ATR
-            atr_df = df.resample("15min").agg(
-                {"open": "first", "high": "max", "low": "min", "close": "last"}
-            ).dropna(subset=["open"])
-        else:
-            # Data is M15 or coarser — use as-is
-            atr_df = df
-
-        if len(atr_df) < 15:
-            # Not enough data — use a reasonable fallback
+        if len(df) < 15:
             return pd.Series(10.0, index=df.index)
 
-        atr_series = _atr(atr_df, period=14)
-        # Shift by 1 to avoid look-ahead bias (use completed candle's ATR)
-        atr_series = atr_series.shift(1)
-        # Align back to original index
-        atr_aligned = atr_series.reindex(df.index, method="ffill")
+        atr_series = _atr(df, period=14, method=atr_method)
 
-        sl_dollars = atr_aligned * sl_atr_mult
+        sl_dollars = atr_series * sl_atr_mult
         # Fill NaN warmup period with first valid value
         first_valid = sl_dollars.dropna()
         fallback = float(first_valid.iloc[0]) if len(first_valid) > 0 else 10.0
@@ -411,40 +397,25 @@ class SuperTrendStrategy(BaseStrategy):
         return sl_dollars
 
     def compute_stops(
-        self, df: pd.DataFrame, sl_atr_mult=1.5, rr_ratio=3.0, **params
+        self, df: pd.DataFrame, sl_atr_mult=1.9, rr_ratio=3.0,
+        atr_method="sma", **params
     ) -> tuple[pd.Series, pd.Series] | None:
-        """Compute per-bar SL/TP from ATR(14).
+        """Compute per-bar SL/TP from ATR(14) on entry timeframe.
 
-        Uses M15 ATR when data is finer than M15, otherwise uses data's own timeframe.
         SL = ATR(14) * sl_atr_mult, converted to fraction of close.
         TP = SL * rr_ratio.
         """
         sl_atr_mult = float(sl_atr_mult)
         rr_ratio = float(rr_ratio)
+        atr_method = str(atr_method)
 
-        # Detect data frequency
-        if len(df) >= 2:
-            median_gap = (df.index[1:] - df.index[:-1]).median()
-            data_minutes = median_gap.total_seconds() / 60
-        else:
-            data_minutes = 5
-
-        if data_minutes < 15:
-            atr_df = df.resample("15min").agg(
-                {"open": "first", "high": "max", "low": "min", "close": "last"}
-            ).dropna(subset=["open"])
-        else:
-            atr_df = df
-
-        if len(atr_df) < 15:
+        if len(df) < 15:
             return None
 
-        atr_series = _atr(atr_df, period=14)
-        atr_series = atr_series.shift(1)
-        atr_aligned = atr_series.reindex(df.index, method="ffill")
+        atr_series = _atr(df, period=14, method=atr_method)
 
         # Convert dollar-based ATR stop to fraction of close price
-        sl_pct = (atr_aligned * sl_atr_mult) / df["close"]
+        sl_pct = (atr_series * sl_atr_mult) / df["close"]
         tp_pct = sl_pct * rr_ratio
 
         # Fill NaN with conservative fallback (first few bars before ATR warms up)

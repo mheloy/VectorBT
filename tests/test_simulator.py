@@ -164,7 +164,9 @@ class TestPartialTP:
         assert len(tp1_trades) >= 1
         assert len(tp2_trades) >= 1
         assert trades[tp1_trades[0], TR_FRACTION] == pytest.approx(0.50)
-        assert trades[tp2_trades[0], TR_FRACTION] == pytest.approx(0.30)
+        # TP2 closes 30% of remaining (0.50), not 30% of initial
+        # 0.50 * 0.30 = 0.15 of initial (matches backtest-engine)
+        assert trades[tp2_trades[0], TR_FRACTION] == pytest.approx(0.15)
 
 
 class TestBreakEven:

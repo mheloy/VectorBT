@@ -35,7 +35,7 @@ To stop, press `Ctrl+C` in the terminal.
 
 1. Open the **Run Backtest** page (default landing page)
 2. In the sidebar, select a **Strategy** (MA Crossover, RSI Reversal, Bollinger Breakout, or SuperTrend)
-3. Select a **Timeframe** (5M, 15M, 30M, 1H, 4H, D) — 1H is a good starting point
+3. Select a **Timeframe** (5M, 15M, 30M, 1H, 4H, D) — 5M is the default for SuperTrend
 4. Adjust **strategy parameters** using the sliders (each strategy has different params)
 5. Set **Initial Cash** and **Fees** under Risk Management
 6. For SuperTrend: toggle **Advanced PM** to "On" to enable partial take profits, break-even, and trailing stop loss (replicates live MT5 bot behavior)
@@ -125,13 +125,67 @@ To stop, press `Ctrl+C` in the terminal.
 
 When `adv_pm=On`, the SuperTrend strategy uses a custom Numba simulator instead of VBT's `from_signals()`, replicating the live MT5 bot's position management:
 
-- **Partial TP1**: Close 50% of position at 1.5R profit
-- **Partial TP2**: Close 30% at 2.9R profit
-- **Runner**: Remaining 20% trails to final TP (3.0R) or trailing SL
-- **Break-Even**: SL moves to entry + $1 when price reaches 1.0R (auto-triggers on TP1)
+- **Partial TP1**: Close 33% of position at 1.2R profit (triggers break-even)
+- **Partial TP2**: Close 50% at 2.0R profit
+- **Runner**: Remaining portion trails SuperTrend line (st_line mode) or uses 3-stage ATR trailing
+- **Break-Even**: SL moves to entry price when TP1 is hit (auto-triggered)
 - **3-Stage Trailing SL**: Progressively tightens as profit grows (1.0x → 0.8x → 0.6x of initial SL distance)
 
 All PM parameters are individually tunable and optimizable via grid search.
+
+### SuperTrend Defaults (Aligned with backtest-engine)
+
+Current defaults match the profitable configuration from the Node.js backtest-engine:
+
+```
+source=hl2, period=17, factor=1.8, atr_method=sma
+sl_atr_mult=1.9, h1_filter=On (same params as entry)
+adv_pm=On recommended: tp1_r=1.2, tp1_pct=0.33, tp2_r=2.0, tp2_pct=0.50
+trail_mode=st_line, risk_pct=0.03 (3% per trade)
+```
+
+Equivalent backtest-engine command:
+```bash
+node src/backtest.js \
+  --source hl2 --band ATR --period 17 --factor 1.8 --atr-mult 1.9 \
+  --htf-confirm \
+  --partials --tp1-r 1.2 --tp1-pct 33 --tp2-r 2.0 --tp2-pct 50
+```
+
+## Cross-Engine Alignment Notes
+
+This engine was aligned with the Node.js [backtest-engine](../backtest-engine) to produce comparable results. Key findings from the alignment process (2026-03-18):
+
+### Changes Made
+
+| Area | Before | After (aligned) | Impact |
+|------|--------|-----------------|--------|
+| ATR smoothing | Wilder's RMA | **SMA** (rolling mean of TR) | HIGH — different band widths, signals, SL distances |
+| SL ATR timeframe | Resampled to M15 | **Entry timeframe** (e.g. M5) | HIGH — M15 ATR ~3x larger, causing oversized stops |
+| Default params | hlc3/P15/F1.5/atr_mult=2.5 | **hl2/P17/F1.8/atr_mult=1.9** | Config alignment |
+| Default TP levels | tp1=0.5R, tp2=1.5R | **tp1=1.2R, tp2=2.0R** | Config alignment |
+| Dashboard timeframe | 1H | **5M** | Matches entry signal timeframe |
+
+### Known Remaining Differences
+
+| Difference | backtest-engine | VectorBackTest | Impact |
+|------------|-----------------|----------------|--------|
+| TP2 fraction basis | % of **remaining** lots | % of **initial** position | Runner is 33.5% vs 17% of position |
+| Runner TP cap | None (trails ST line only) | Capped at final_tp_r=3.0 | Limits upside on runners |
+| Trail update order | Update trail BEFORE SL check | SL check first, trail after | 1-bar lag on trail exits |
+| BE offset | $0 (exact entry) | $1 above entry | Minor |
+| Fee model | Zero (no spread/commission) | 0.0001 (1bp per side) | **Destroys profitability with M5 ATR sizing** |
+
+### Fee Sensitivity
+
+With M5-ATR-based position sizing, the position notional is large relative to account equity. The default 1bp fee (`fees=0.0001`) compounds aggressively across thousands of partial exits and completely overwhelms the edge:
+
+| Fee Setting | Total Return | Win Rate | Profit Factor | Max DD |
+|-------------|-------------|----------|---------------|--------|
+| 0 (matches backtest-engine) | +3,347% | 50.8% | 1.16 | 74.4% |
+| 0.0001 (1bp default) | -100% | 50.8% | 0.90 | 100% |
+
+**Recommendation**: When comparing with the backtest-engine, use `fees=0`. When modelling realistic execution, calibrate fees to actual broker spread/commission for XAUUSD M5 trades.
 
 ## Running Tests
 
@@ -172,7 +226,9 @@ docs/strategies/          # Strategy documentation + parameter history
 
 ## Key Design Decisions
 
-- **Fee model**: Default 1bp/side (`fees=0.0001`), approximating XAUUSD spread on MT5
+- **Fee model**: Default 1bp/side (`fees=0.0001`), approximating XAUUSD spread on MT5. Set to 0 for backtest-engine parity.
+- **ATR method**: SMA (default, matches backtest-engine) or RMA (Wilder's, matches PineScript). Configurable via `atr_method` parameter.
+- **SL sizing**: ATR(14) on entry timeframe (e.g. M5), not resampled. Matches backtest-engine behaviour.
 - **No volume indicators**: Volume is always 0 from Twelve Data
 - **Vectorized optimization**: Multi-column DataFrame passed to single `Portfolio.from_signals()` call
 - **Dual-path runner**: Simple strategies use VBT; PM strategies use custom Numba simulator (~5-15ms per 236K bars)

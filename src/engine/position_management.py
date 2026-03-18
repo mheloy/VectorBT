@@ -58,5 +58,7 @@ class PositionManagementConfig:
     trail_mode: str = "st_line"
 
     # Position sizing
-    risk_pct: float = 0.03  # Risk 3% of equity per trade
+    sizing_mode: str = "risk_pct"  # "risk_pct" or "fixed_lot"
+    risk_pct: float = 0.03  # Risk 3% of equity per trade (when sizing_mode="risk_pct")
+    fixed_lot_units: float = 1.0  # Fixed units per trade (when sizing_mode="fixed_lot")
     max_lot_value: float = 0.0  # Max notional per trade in $ (0 = no limit)

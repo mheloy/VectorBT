@@ -28,19 +28,18 @@ strategies = get_all_strategies()
 strategy_name = st.sidebar.selectbox("Strategy", list(strategies.keys()))
 strategy = strategies[strategy_name]
 
-timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("1H"))
+timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("5M"))
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parameters")
 
 # Build parameter inputs dynamically — separate core params from PM params
 param_values = {}
-pm_param_names = {"adv_pm", "tp1_r", "tp1_pct", "tp2_r", "tp2_pct", "be_trigger_r", "final_tp_r", "trail_mode", "risk_pct"}
-h1_param_names = {"h1_period", "h1_factor", "h1_source"}
+pm_param_names = {"adv_pm", "tp1_r", "tp1_pct", "tp2_r", "tp2_pct", "be_trigger_r", "final_tp_r", "trail_mode", "risk_pct", "sizing_mode", "fixed_lot_units"}
 
 for p in strategy.parameters():
-    if p.name in pm_param_names or p.name in h1_param_names:
-        continue  # Show PM and H1 params separately below
+    if p.name in pm_param_names:
+        continue  # Show PM params separately below
     if p.choices:
         param_values[p.name] = st.sidebar.selectbox(
             p.description or p.name, p.choices,
@@ -62,20 +61,6 @@ for p in strategy.parameters():
             value=p.default,
             key=f"param_{p.name}",
         )
-
-# --- H1 Filter params (shown when H1 filter is On) ---
-if param_values.get("h1_filter") == "On":
-    h1_params = {p.name: p for p in strategy.parameters() if p.name in h1_param_names}
-    if h1_params:
-        st.sidebar.caption("H1 Filter Settings")
-        param_values["h1_period"] = st.sidebar.slider("H1 Period", 10, 100, 50, 1, key="param_h1_period")
-        param_values["h1_factor"] = st.sidebar.slider("H1 Factor", 0.5, 5.0, 3.0, 0.1, key="param_h1_factor")
-        param_values["h1_source"] = st.sidebar.selectbox("H1 Source", ["hl2", "close", "hlc3", "ohlc4"], index=1, key="param_h1_source")
-else:
-    # Set defaults so they're in param_values
-    param_values.setdefault("h1_period", 50)
-    param_values.setdefault("h1_factor", 3.0)
-    param_values.setdefault("h1_source", "close")
 
 # --- Position Management section (only for strategies that support it) ---
 has_pm_support = type(strategy).position_management is not BaseStrategy.position_management
@@ -106,14 +91,23 @@ if has_pm_support:
         param_values["be_trigger_r"] = st.sidebar.slider("BE Trigger R", 0.3, 3.0, 1.0, 0.1, key="param_be_trigger_r")
         param_values["final_tp_r"] = st.sidebar.slider("Final TP R (runner)", 1.5, 10.0, 3.0, 0.5, key="param_final_tp_r")
 
-        st.sidebar.caption("Trailing & Sizing")
+        st.sidebar.caption("Trailing")
         param_values["trail_mode"] = st.sidebar.selectbox("Trail Mode", ["st_line", "atr_stages"], index=0, key="param_trail_mode")
-        param_values["risk_pct"] = st.sidebar.slider("Risk % per trade", 0.5, 10.0, 3.0, 0.5, key="param_risk_pct") / 100
-
         if param_values["trail_mode"] == "atr_stages":
             st.sidebar.caption("ATR Stages: 0.67R/1.0x, 1.0R/0.8x, 1.33R/0.6x")
         else:
             st.sidebar.caption("Runner trails SuperTrend line (natural S/R)")
+
+        st.sidebar.caption("Position Sizing")
+        sizing_mode = st.sidebar.selectbox("Sizing Mode", ["risk_pct", "fixed_lot"], index=0, key="param_sizing_mode",
+                                           format_func=lambda x: "Risk % of Equity" if x == "risk_pct" else "Fixed Lot Size")
+        param_values["sizing_mode"] = sizing_mode
+        if sizing_mode == "risk_pct":
+            param_values["risk_pct"] = st.sidebar.slider("Risk % per trade", 0.5, 10.0, 3.0, 0.5, key="param_risk_pct") / 100
+            param_values["fixed_lot_units"] = 1.0
+        else:
+            param_values["fixed_lot_units"] = st.sidebar.number_input("Lot Size (units)", value=1.0, min_value=0.01, step=0.1, key="param_fixed_lot_units")
+            param_values["risk_pct"] = 0.03  # unused but needs a value
     else:
         # Set defaults so they're in param_values but PM is off
         for pn in pm_param_names:
@@ -123,7 +117,7 @@ if has_pm_support:
 st.sidebar.markdown("---")
 st.sidebar.subheader("Risk Management")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0)
-fees = st.sidebar.number_input("Fees (fraction)", value=0.0001, step=0.0001, format="%.4f")
+fees = st.sidebar.number_input("Fees (fraction)", value=0.0, step=0.0001, format="%.6f")
 
 # Check if strategy provides dynamic ATR-based stops
 _has_dynamic_stops = type(strategy).compute_stops is not BaseStrategy.compute_stops

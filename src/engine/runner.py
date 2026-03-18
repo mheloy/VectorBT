@@ -13,7 +13,7 @@ def run_backtest(
     df: pd.DataFrame,
     params: dict | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     sl_stop: float | None = None,
     tp_stop: float | None = None,
     freq: str | None = None,
@@ -51,6 +51,8 @@ def run_backtest(
         if pm_config.trail_mode == "st_line" and hasattr(strategy, 'compute_supertrend_values'):
             st_values = strategy.compute_supertrend_values(df, **effective_params)
 
+        fixed_lot = pm_config.fixed_lot_units if pm_config.sizing_mode == "fixed_lot" else 0.0
+
         equity_arr, trade_records, n_trades = simulate(
             df=df,
             entries=entries,
@@ -62,6 +64,7 @@ def run_backtest(
             risk_pct=pm_config.risk_pct,
             max_lot_value=pm_config.max_lot_value,
             st_values=st_values,
+            fixed_lot_units=fixed_lot,
         )
 
         sim_result = build_simulation_result(
