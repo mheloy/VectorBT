@@ -51,6 +51,10 @@ def _simulate_core(
     close_arr,
     entries_arr,
     exits_arr,
+    short_entries_arr,    # bool array: short entry signals
+    short_exits_arr,      # bool array: short exit signals
+    slippage,             # float64: fraction of price for slippage
+    use_next_bar_open,    # bool: True = enter at next bar open
     sl_distance_arr,
     st_values_arr,  # SuperTrend line values for ST-line trailing
     trail_mode_flag,  # 0 = atr_stages, 1 = st_line
@@ -114,6 +118,9 @@ def _simulate_core(
     trail_stage = 0  # 0 = none, 1+ = active stage
 
     for i in range(n_bars):
+        # ============================================================
+        # PHASE 1: EXIT PROCESSING (if in position)
+        # ============================================================
         if in_position:
             # --- Check exits (conservative order: SL first) ---
             # PnL = (exit - entry) * direction * units_closed
@@ -127,7 +134,11 @@ def _simulate_core(
                 sl_hit = high_arr[i] >= sl_price
 
             if sl_hit:
-                exit_price = sl_price
+                # Apply slippage to SL exit price
+                if direction == 1:
+                    exit_price = sl_price * (1.0 - slippage)
+                else:
+                    exit_price = sl_price * (1.0 + slippage)
                 units_closed = initial_units * position_fraction
                 trade_pnl = (exit_price - entry_price) * direction * units_closed
                 fee_cost = units_closed * exit_price * fees
@@ -158,12 +169,10 @@ def _simulate_core(
                 in_position = False
                 position_fraction = 0.0
                 initial_units = 0.0
-
-                equity[i] = cash
-                continue
+                # NO continue — fall through to Phase 2 for same-bar reversal
 
             # 2. Partial TP checks (on favorable side)
-            if partial_tp_enabled and n_partial_tps > 0:
+            if in_position and partial_tp_enabled and n_partial_tps > 0:
                 for p in range(n_partial_tps):
                     if partial_done[p]:
                         continue
@@ -176,7 +185,11 @@ def _simulate_core(
                         triggered = low_arr[i] <= trigger_price
 
                     if triggered:
-                        exit_price = trigger_price
+                        # Apply slippage to partial TP exit price
+                        if direction == 1:
+                            exit_price = trigger_price * (1.0 - slippage)
+                        else:
+                            exit_price = trigger_price * (1.0 + slippage)
                         if p == 0:
                             # TP1: fraction of initial position
                             close_frac = pt_pcts[p]
@@ -225,12 +238,8 @@ def _simulate_core(
                             initial_units = 0.0
                             break
 
-            if not in_position:
-                equity[i] = cash
-                continue
-
             # 3. Break-even check (if not already triggered by partial)
-            if be_enabled and not be_done:
+            if in_position and be_enabled and not be_done:
                 be_trigger_price = entry_price + direction * initial_sl_distance * be_trigger_r
                 be_triggered = False
                 if direction == 1:
@@ -250,7 +259,7 @@ def _simulate_core(
                     be_done = True
 
             # 4. Trailing SL update
-            if trailing_sl_enabled and i > 0:
+            if in_position and trailing_sl_enabled and i > 0:
                 if trail_mode_flag == 1 and be_done:
                     # ST-line trailing: runner stop follows the SuperTrend line
                     st_val = st_values_arr[i]
@@ -296,7 +305,7 @@ def _simulate_core(
                                 sl_price = new_sl
 
             # 5. Final TP check (for runner) — skip if final_tp_r <= 0 (no cap)
-            if final_tp_r > 1e-9:
+            if in_position and final_tp_r > 1e-9:
                 final_tp_price = entry_price + direction * initial_sl_distance * final_tp_r
                 final_tp_hit = False
                 if direction == 1:
@@ -305,7 +314,11 @@ def _simulate_core(
                     final_tp_hit = low_arr[i] <= final_tp_price
 
                 if final_tp_hit:
-                    exit_price = final_tp_price
+                    # Apply slippage to final TP exit price
+                    if direction == 1:
+                        exit_price = final_tp_price * (1.0 - slippage)
+                    else:
+                        exit_price = final_tp_price * (1.0 + slippage)
                     units_closed = initial_units * position_fraction
                     trade_pnl = (exit_price - entry_price) * direction * units_closed
                     fee_cost = units_closed * exit_price * fees
@@ -326,53 +339,77 @@ def _simulate_core(
                     in_position = False
                     position_fraction = 0.0
                     initial_units = 0.0
-
-                    equity[i] = cash
-                    continue
+                    # NO continue — fall through to Phase 2
 
             # 6. Signal exit check (skipped when PM manages all exits)
-            if exits_arr[i] and not ignore_signal_exits:
-                exit_price = close_arr[i]
-                units_closed = initial_units * position_fraction
-                trade_pnl = (exit_price - entry_price) * direction * units_closed
-                fee_cost = units_closed * exit_price * fees
-                trade_pnl -= fee_cost
-                cash += trade_pnl
+            if in_position and not ignore_signal_exits:
+                exit_signal = False
+                if direction == 1 and exits_arr[i]:
+                    exit_signal = True
+                elif direction == -1 and short_exits_arr[i]:
+                    exit_signal = True
 
-                if n_trades < max_trades:
-                    trades[n_trades, TR_ENTRY_BAR] = entry_bar
-                    trades[n_trades, TR_EXIT_BAR] = i
-                    trades[n_trades, TR_ENTRY_PRICE] = entry_price
-                    trades[n_trades, TR_EXIT_PRICE] = exit_price
-                    trades[n_trades, TR_FRACTION] = position_fraction
-                    trades[n_trades, TR_PNL] = trade_pnl
-                    trades[n_trades, TR_EXIT_TYPE] = EXIT_SIGNAL
-                    trades[n_trades, TR_DIRECTION] = direction
-                    n_trades += 1
+                if exit_signal:
+                    # Apply slippage to signal exit price
+                    if direction == 1:
+                        exit_price = close_arr[i] * (1.0 - slippage)
+                    else:
+                        exit_price = close_arr[i] * (1.0 + slippage)
+                    units_closed = initial_units * position_fraction
+                    trade_pnl = (exit_price - entry_price) * direction * units_closed
+                    fee_cost = units_closed * exit_price * fees
+                    trade_pnl -= fee_cost
+                    cash += trade_pnl
 
-                in_position = False
-                position_fraction = 0.0
-                initial_units = 0.0
+                    if n_trades < max_trades:
+                        trades[n_trades, TR_ENTRY_BAR] = entry_bar
+                        trades[n_trades, TR_EXIT_BAR] = i
+                        trades[n_trades, TR_ENTRY_PRICE] = entry_price
+                        trades[n_trades, TR_EXIT_PRICE] = exit_price
+                        trades[n_trades, TR_FRACTION] = position_fraction
+                        trades[n_trades, TR_PNL] = trade_pnl
+                        trades[n_trades, TR_EXIT_TYPE] = EXIT_SIGNAL
+                        trades[n_trades, TR_DIRECTION] = direction
+                        n_trades += 1
 
-                equity[i] = cash
-                continue
+                    in_position = False
+                    position_fraction = 0.0
+                    initial_units = 0.0
+                    # NO continue — fall through to Phase 2
 
-            # Mark-to-market for open position
-            unrealized_pnl = (close_arr[i] - entry_price) * direction * initial_units * position_fraction
-            equity[i] = cash + unrealized_pnl
+        # ============================================================
+        # PHASE 2: ENTRY PROCESSING (if not in position)
+        # ============================================================
+        if not in_position:
+            enter_long = entries_arr[i]
+            enter_short = short_entries_arr[i]
 
-        else:
-            # Not in position — check for entry
-            if entries_arr[i]:
+            if enter_long or enter_short:
                 sl_dist = sl_distance_arr[i]
                 if sl_dist > 0 and not np.isnan(sl_dist):
-                    entry_price = close_arr[i]
-                    entry_bar = i
-                    direction = 1  # Long only for now
+                    if use_next_bar_open:
+                        if i + 1 < n_bars:
+                            base_price = open_arr[i + 1]
+                            entry_bar = i + 1
+                        else:
+                            # Last bar, skip entry
+                            equity[i] = cash
+                            continue
+                    else:
+                        base_price = close_arr[i]
+                        entry_bar = i
+
+                    if enter_long:
+                        direction = 1
+                        entry_price = base_price * (1.0 + slippage)
+                    else:
+                        direction = -1
+                        entry_price = base_price * (1.0 - slippage)
+
                     position_fraction = 1.0
                     initial_sl_distance = sl_dist
-                    sl_price = entry_price - sl_dist  # Long: SL below
-                    tp_price = entry_price + sl_dist * final_tp_r
+                    sl_price = entry_price - direction * sl_dist  # Direction-aware!
+                    tp_price = entry_price + direction * sl_dist * final_tp_r
 
                     # Position sizing
                     if fixed_lot_units > 0:
@@ -400,15 +437,22 @@ def _simulate_core(
                     for p in range(10):
                         partial_done[p] = False
 
+        # ============================================================
+        # PHASE 3: MARK-TO-MARKET (always)
+        # ============================================================
+        if in_position:
+            unrealized_pnl = (close_arr[i] - entry_price) * direction * initial_units * position_fraction
+            equity[i] = cash + unrealized_pnl
+        else:
             equity[i] = cash
-            if in_position:
-                # First bar mark-to-market
-                unrealized_pnl = (close_arr[i] - entry_price) * direction * initial_units * position_fraction
-                equity[i] = cash + unrealized_pnl
 
     # Close any remaining position at last bar
     if in_position:
-        exit_price = close_arr[n_bars - 1]
+        base_exit = close_arr[n_bars - 1]
+        if direction == 1:
+            exit_price = base_exit * (1.0 - slippage)
+        else:
+            exit_price = base_exit * (1.0 + slippage)
         units_closed = initial_units * position_fraction
         trade_pnl = (exit_price - entry_price) * direction * units_closed
         fee_cost = units_closed * exit_price * fees
@@ -439,25 +483,47 @@ def simulate(
     config: PositionManagementConfig,
     init_cash: float = 10_000.0,
     fees: float = 0.0,
+    slippage: float = 0.0,
     risk_pct: float = 0.03,
     max_lot_value: float = 0.0,
     st_values: pd.Series | None = None,
     fixed_lot_units: float = 0.0,
+    short_entries: pd.Series | None = None,
+    short_exits: pd.Series | None = None,
+    execution_mode: str = "next_bar_open",
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Run the advanced position management simulation.
 
     Args:
         df: OHLCV DataFrame with datetime index.
-        entries: Boolean Series of entry signals.
-        exits: Boolean Series of exit signals.
+        entries: Boolean Series of long entry signals.
+        exits: Boolean Series of long exit signals.
         sl_distances: Series of SL distances in dollars (1R) per bar.
         config: Position management configuration.
         init_cash: Starting capital.
         fees: Fee fraction per trade side.
+        slippage: Fraction of price for slippage (e.g. 0.001 = 0.1%).
+        risk_pct: Fraction of equity to risk per trade.
+        max_lot_value: Max notional per trade in $ (0 = no limit).
+        st_values: SuperTrend line values for ST-line trailing.
+        fixed_lot_units: Fixed lot size in units (>0 overrides risk-based sizing).
+        short_entries: Boolean Series of short entry signals.
+        short_exits: Boolean Series of short exit signals.
+        execution_mode: "next_bar_open" or "same_bar_close".
 
     Returns:
         Tuple of (equity_array, trade_records_array, n_trades).
     """
+    # Convert short signals to arrays
+    if short_entries is not None:
+        short_entries_arr = short_entries.values.astype(np.bool_)
+        short_exits_arr = short_exits.values.astype(np.bool_)
+    else:
+        short_entries_arr = np.zeros(len(df), dtype=np.bool_)
+        short_exits_arr = np.zeros(len(df), dtype=np.bool_)
+
+    use_next_bar_open = execution_mode == "next_bar_open"
+
     # Convert config to flat Numba-compatible arrays
     n_partial_tps = len(config.partial_tps) if config.partial_tp_enabled else 0
     pt_triggers = np.array(
@@ -490,6 +556,10 @@ def simulate(
         close_arr=df["close"].values.astype(np.float64),
         entries_arr=entries.values.astype(np.bool_),
         exits_arr=exits.values.astype(np.bool_),
+        short_entries_arr=short_entries_arr,
+        short_exits_arr=short_exits_arr,
+        slippage=float(slippage),
+        use_next_bar_open=bool(use_next_bar_open),
         sl_distance_arr=sl_distances.values.astype(np.float64),
         st_values_arr=st_vals_arr,
         trail_mode_flag=trail_mode_flag,

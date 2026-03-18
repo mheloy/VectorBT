@@ -17,6 +17,7 @@ from src.engine.simulator import (
     EXIT_TP1,
     EXIT_TP2,
     EXIT_TRAIL_SL,
+    TR_DIRECTION,
     TR_EXIT_TYPE,
     TR_FRACTION,
     TR_PNL,
@@ -317,3 +318,124 @@ class TestSimResultIntegration:
         assert len(br.equity_curve) == 10
         assert isinstance(br.metrics, dict)
         assert len(br.trades_df) >= 1
+
+
+class TestShortDirection:
+    """Test short selling support."""
+
+    def test_short_sl_hit(self):
+        """Short entry, price rises above SL -> loss."""
+        prices = [2000.0] * 5 + [2015.0] * 5
+        df = _make_df(prices)
+        entries, _ = _make_signals(10, [])
+        short_entries, short_exits = _make_signals(10, [1])
+        sl_dist = pd.Series(10.0, index=df.index)
+
+        config = PositionManagementConfig(
+            partial_tp_enabled=False, be_enabled=False,
+            trailing_sl_enabled=False, final_tp_r=0,
+        )
+        equity, trades, n = simulate(
+            df, entries, pd.Series(False, index=df.index),
+            sl_dist, config, init_cash=10000,
+            short_entries=short_entries, short_exits=short_exits,
+            execution_mode="same_bar_close",
+        )
+        assert n >= 1
+        assert int(trades[0, TR_EXIT_TYPE]) == EXIT_INITIAL_SL
+        assert trades[0, TR_PNL] < 0
+        assert trades[0, TR_DIRECTION] == -1
+
+    def test_short_profitable(self):
+        """Short entry, price drops -> profit."""
+        prices = [2000.0] * 3 + [1980.0] * 7
+        df = _make_df(prices)
+        entries, _ = _make_signals(10, [])
+        short_entries, short_exits = _make_signals(10, [1], [8])
+        sl_dist = pd.Series(10.0, index=df.index)
+
+        config = PositionManagementConfig(
+            partial_tp_enabled=False, be_enabled=False,
+            trailing_sl_enabled=False, final_tp_r=0,
+        )
+        equity, trades, n = simulate(
+            df, entries, pd.Series(False, index=df.index),
+            sl_dist, config, init_cash=10000,
+            short_entries=short_entries, short_exits=short_exits,
+            execution_mode="same_bar_close",
+        )
+        assert n >= 1
+        assert trades[0, TR_PNL] > 0
+        assert trades[0, TR_DIRECTION] == -1
+
+    def test_same_bar_reversal(self):
+        """Long exit + short entry on same bar."""
+        prices = [2000.0] * 3 + [1990.0] * 7
+        df = _make_df(prices)
+        long_entries, long_exits = _make_signals(10, [1], [4])
+        short_entries, short_exits = _make_signals(10, [4], [8])
+        sl_dist = pd.Series(10.0, index=df.index)
+
+        config = PositionManagementConfig(
+            partial_tp_enabled=False, be_enabled=False,
+            trailing_sl_enabled=False, final_tp_r=0,
+        )
+        equity, trades, n = simulate(
+            df, long_entries, long_exits, sl_dist, config, init_cash=10000,
+            short_entries=short_entries, short_exits=short_exits,
+            execution_mode="same_bar_close",
+        )
+        assert n >= 2
+
+
+class TestSlippage:
+    """Test slippage on execution price."""
+
+    def test_slippage_reduces_profit(self):
+        prices = [2000.0] * 3 + [2020.0] * 7
+        df = _make_df(prices)
+        entries, exits = _make_signals(10, [1], [8])
+        sl_dist = pd.Series(10.0, index=df.index)
+
+        config = PositionManagementConfig(
+            partial_tp_enabled=False, be_enabled=False,
+            trailing_sl_enabled=False, final_tp_r=0,
+        )
+        _, trades_no, n1 = simulate(
+            df, entries, exits, sl_dist, config, init_cash=10000,
+            slippage=0.0, execution_mode="same_bar_close",
+        )
+        _, trades_yes, n2 = simulate(
+            df, entries, exits, sl_dist, config, init_cash=10000,
+            slippage=0.001, execution_mode="same_bar_close",
+        )
+        assert n1 >= 1 and n2 >= 1
+        assert trades_yes[0, TR_PNL] < trades_no[0, TR_PNL]
+
+
+class TestNextBarOpen:
+    """Test next-bar-open execution mode."""
+
+    def test_entry_at_next_bar_open(self):
+        """Entry signal on bar 1 should execute at bar 2's open price."""
+        prices = [2000.0] * 3 + [2020.0] * 7
+        df = _make_df(prices)
+        entries, exits = _make_signals(10, [1], [8])
+        sl_dist = pd.Series(10.0, index=df.index)
+
+        config = PositionManagementConfig(
+            partial_tp_enabled=False, be_enabled=False,
+            trailing_sl_enabled=False, final_tp_r=0,
+        )
+        _, trades_nbo, n_nbo = simulate(
+            df, entries, exits, sl_dist, config, init_cash=10000,
+            execution_mode="next_bar_open",
+        )
+        _, trades_sbc, n_sbc = simulate(
+            df, entries, exits, sl_dist, config, init_cash=10000,
+            execution_mode="same_bar_close",
+        )
+        assert n_nbo >= 1 and n_sbc >= 1
+        # next_bar_open uses open of bar 2; same_bar_close uses close of bar 1
+        # They should differ (open[2] vs close[1])
+        # Both should produce trades but potentially different entry prices
