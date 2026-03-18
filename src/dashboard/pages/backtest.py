@@ -115,9 +115,20 @@ if has_pm_support:
                 param_values[pn] = pm_params[pn].default if pn in pm_params else "Off"
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Risk Management")
+st.sidebar.subheader("Execution Model")
+execution_mode = st.sidebar.selectbox(
+    "Execution Timing",
+    ["next_bar_open", "same_bar_close"],
+    index=0,
+    format_func=lambda x: "Next Bar Open (realistic)" if x == "next_bar_open" else "Same Bar Close (legacy)",
+)
+
+st.sidebar.subheader("Cost Model")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0)
-fees = st.sidebar.number_input("Fees (fraction)", value=0.0, step=0.0001, format="%.6f")
+fees = st.sidebar.number_input("Commission (fraction)", value=0.000006, step=0.000001, format="%.6f",
+                                help="ECN commission as fraction of notional. Default: $3/lot at $5000 gold")
+slippage = st.sidebar.number_input("Slippage (fraction)", value=0.000004, step=0.000001, format="%.6f",
+                                    help="Half-spread as fraction of price. Default: 4pt spread on XAUUSD")
 
 # Check if strategy provides dynamic ATR-based stops
 _has_dynamic_stops = type(strategy).compute_stops is not BaseStrategy.compute_stops
@@ -155,9 +166,11 @@ if st.sidebar.button("Run Backtest", type="primary", use_container_width=True):
             params=param_values,
             init_cash=init_cash,
             fees=fees,
+            slippage=slippage,
             sl_stop=sl_stop,
             tp_stop=tp_stop,
             freq=freq_map.get(timeframe),
+            execution_mode=execution_mode,
         )
 
     st.session_state["bt_result"] = result
@@ -166,7 +179,8 @@ if st.sidebar.button("Run Backtest", type="primary", use_container_width=True):
     st.session_state["backtest_strategy"] = strategy_name
     st.session_state["backtest_tf"] = timeframe
     st.session_state["backtest_config"] = {
-        "init_cash": init_cash, "fees": fees, "sl_stop": sl_stop, "tp_stop": tp_stop,
+        "init_cash": init_cash, "fees": fees, "slippage": slippage,
+        "sl_stop": sl_stop, "tp_stop": tp_stop, "execution_mode": execution_mode,
     }
 
 # --- Display results ---
@@ -190,6 +204,9 @@ if "bt_result" in st.session_state:
     col8.metric("Calmar", f"{metrics['calmar_ratio']:.2f}")
     col9.metric("Kelly (Half)", f"{kelly.half_kelly_pct:.1f}%")
     col10.metric("Recommended Risk", f"{kelly.recommended_risk_pct:.1f}%")
+
+    if metrics["total_trades"] < 30:
+        st.warning("Low trade count — results may not be statistically significant (< 30 trades)")
 
     # --- Exit type breakdown (simulator path only) ---
     if result.is_simulator and "exit_type_breakdown" in metrics:

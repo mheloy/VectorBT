@@ -86,7 +86,27 @@ anchored = st.sidebar.checkbox("Anchored IS (expanding window)", value=False, ke
 min_trades = st.sidebar.slider("Min trades per IS window", 5, 50, 20, key="wf_min_trades")
 metric = st.sidebar.selectbox("Optimization metric", ["calmar_ratio", "sharpe_ratio", "total_return", "sortino_ratio", "profit_factor"], key="wf_metric")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="wf_cash")
-fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="wf_fees")
+fees = st.sidebar.number_input("Commission (fraction)", value=0.000006, step=0.000001, format="%.6f",
+                                help="ECN commission as fraction of notional", key="wf_fees")
+slippage = st.sidebar.number_input("Slippage (fraction)", value=0.000004, step=0.000001, format="%.6f",
+                                    help="Half-spread as fraction of price", key="wf_slippage")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Execution Model")
+execution_mode = st.sidebar.selectbox(
+    "Execution Timing",
+    ["next_bar_open", "same_bar_close"],
+    index=0,
+    format_func=lambda x: "Next Bar Open (realistic)" if x == "next_bar_open" else "Same Bar Close (legacy)",
+    key="wf_exec_mode",
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Hold-Out Validation")
+holdout_enabled = st.sidebar.checkbox("Reserve hold-out set", value=True, key="wf_holdout")
+holdout_pct = st.sidebar.slider("Hold-out %", 0.05, 0.30, 0.10, 0.01, key="wf_holdout_pct",
+                                 disabled=not holdout_enabled,
+                                 help="Fraction of data reserved as unseen validation set")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 
@@ -104,8 +124,12 @@ if st.sidebar.button("Run Walk-Forward", type="primary", use_container_width=Tru
         strategy=strategy, df=df, sweep_params=sweep_params,
         n_windows=n_windows, anchored=anchored, min_trades=min_trades,
         metric=metric, init_cash=init_cash, fees=fees,
+        slippage=slippage,
         freq=freq_map.get(timeframe),
         progress_cb=on_wf_progress,
+        execution_mode=execution_mode,
+        holdout_enabled=holdout_enabled,
+        holdout_pct=holdout_pct if holdout_enabled else 0.0,
     )
     progress_bar.progress(1.0, text="Done!")
     import time; time.sleep(0.5)
@@ -185,6 +209,31 @@ if "wf_result" in st.session_state:
         fig3.add_hline(y=0.5, line_dash="dash", line_color="orange", annotation_text="ER = 0.5 threshold")
         fig3.update_layout(height=300, xaxis_title="Window", yaxis_title="Efficiency Ratio (OOS Sharpe / IS Sharpe)", margin=dict(l=0, r=0, t=30, b=0))
         st.plotly_chart(fig3, use_container_width=True)
+
+    # --- Hold-Out Validation ---
+    if result.holdout_metrics is not None:
+        st.markdown("---")
+        st.subheader("Hold-Out Validation (Unseen Data)")
+        st.caption("These results are from data never seen during optimization or WFA")
+        hm = result.holdout_metrics
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Return", f"{hm.get('total_return', 0):.2f}%")
+        col2.metric("Sharpe", f"{hm.get('sharpe_ratio', 0):.2f}")
+        col3.metric("Win Rate", f"{hm.get('win_rate', 0):.1f}%")
+        col4.metric("Trades", f"{hm.get('total_trades', 0)}")
+
+        if result.holdout_equity is not None and not result.holdout_equity.empty:
+            st.subheader("Hold-Out Equity Curve")
+            fig_ho = go.Figure()
+            fig_ho.add_trace(go.Scatter(
+                x=result.holdout_equity.index, y=result.holdout_equity.values,
+                mode="lines", name="Hold-Out", line=dict(color="green", width=2),
+            ))
+            fig_ho.update_layout(height=350, yaxis_title="Equity ($)", margin=dict(l=0, r=0, t=30, b=0))
+            st.plotly_chart(fig_ho, use_container_width=True)
+
+        if result.holdout_params:
+            st.caption(f"Params used: {result.holdout_params}")
 
     # --- Window details table ---
     st.subheader("Window Details")

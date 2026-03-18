@@ -136,10 +136,23 @@ metric_options = [
 ]
 target_metric = st.sidebar.selectbox("Optimize for", metric_options, key="opt_metric")
 
-# Settings
+# Execution & Cost Model
 st.sidebar.markdown("---")
+st.sidebar.subheader("Execution Model")
+execution_mode = st.sidebar.selectbox(
+    "Execution Timing",
+    ["next_bar_open", "same_bar_close"],
+    index=0,
+    format_func=lambda x: "Next Bar Open (realistic)" if x == "next_bar_open" else "Same Bar Close (legacy)",
+    key="opt_exec_mode",
+)
+
+st.sidebar.subheader("Cost Model")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="opt_cash")
-fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="opt_fees")
+fees = st.sidebar.number_input("Commission (fraction)", value=0.000006, step=0.000001, format="%.6f",
+                                help="ECN commission as fraction of notional", key="opt_fees")
+slippage = st.sidebar.number_input("Slippage (fraction)", value=0.000004, step=0.000001, format="%.6f",
+                                    help="Half-spread as fraction of price", key="opt_slippage")
 
 # Combo count
 n_combos = len(sweep_x_values)
@@ -178,8 +191,10 @@ if st.sidebar.button("Run Optimization", type="primary", use_container_width=Tru
         metric=target_metric,
         init_cash=init_cash,
         fees=fees,
+        slippage=slippage,
         freq=freq_map.get(timeframe),
         progress_cb=on_progress,
+        execution_mode=execution_mode,
     )
     progress_bar.progress(1.0, text="Done!")
     import time; time.sleep(0.5)
