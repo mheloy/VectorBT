@@ -31,7 +31,8 @@ for p in numeric_params:
         f"{p.name} range", p.min_val, p.max_val, (p.min_val, p.max_val),
         step=p.step or 1, key=f"wf_{p.name}",
     )
-    step = st.sidebar.number_input(f"{p.name} step", value=float(p.step or 5), min_value=0.1, step=0.1, format="%.1f", key=f"wf_{p.name}_step")
+    default_step = float(p.step or 5)
+    step = st.sidebar.number_input(f"{p.name} step", value=default_step, min_value=default_step, step=0.1, format="%.4f", key=f"wf_{p.name}_step")
     if isinstance(step, float) and step != int(step):
         sweep_vals = []
         v = float(vals[0])
