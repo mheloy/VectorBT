@@ -35,17 +35,17 @@ for p in strategy.parameters():
         param_values[p.name] = st.sidebar.number_input(p.description or p.name, value=p.default, key=f"td_{p.name}")
 
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="td_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="td_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="td_fees")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 
 if st.sidebar.button("Analyze Trades", type="primary", use_container_width=True):
     with st.spinner("Running backtest and analyzing trades..."):
         df = resample(raw_data, timeframe)
-        portfolio = run_backtest(strategy, df, param_values, init_cash, fees, freq=freq_map.get(timeframe))
-        result = analyze_trades(portfolio, df)
+        bt_result = run_backtest(strategy, df, param_values, init_cash, fees, freq=freq_map.get(timeframe))
+        result = analyze_trades(bt_result, df)
     st.session_state["trade_analysis"] = result
-    st.session_state["trade_portfolio"] = portfolio
+    st.session_state["trade_bt_result"] = bt_result
 
 if "trade_analysis" not in st.session_state:
     st.info("Configure strategy and click 'Analyze Trades' to begin.")
@@ -121,9 +121,9 @@ with tab_streak:
         st.dataframe(result.streaks_df, use_container_width=True, hide_index=True)
 
         # Cumulative PnL with color coding
-        portfolio = st.session_state.get("trade_portfolio")
-        if portfolio:
-            trades = portfolio.trades.records_readable
+        bt_result = st.session_state.get("trade_bt_result")
+        if bt_result:
+            trades = bt_result.trades_df
             if "PnL" in trades.columns:
                 cumulative = trades["PnL"].cumsum()
                 colors = ["green" if p > 0 else "red" for p in trades["PnL"]]

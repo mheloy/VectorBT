@@ -38,7 +38,7 @@ method = st.sidebar.selectbox("Detection Method", [RegimeMethod.HMM.value, Regim
 n_regimes = st.sidebar.slider("Number of Regimes (HMM)", 2, 4, 3, key="rg_nreg", disabled=method != "HMM")
 
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0, key="rg_cash")
-fees = st.sidebar.number_input("Fees", value=0.0001, step=0.0001, format="%.4f", key="rg_fees")
+fees = st.sidebar.number_input("Fees", value=0.0, step=0.0001, format="%.6f", key="rg_fees")
 
 freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
 

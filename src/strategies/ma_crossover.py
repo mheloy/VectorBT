@@ -3,7 +3,7 @@
 import vectorbt as vbt
 import pandas as pd
 
-from .base import BaseStrategy, StrategyParam
+from .base import BaseStrategy, StrategyParam, SignalResult
 
 
 class MACrossover(BaseStrategy):
@@ -31,7 +31,7 @@ class MACrossover(BaseStrategy):
 
     def generate_signals(
         self, df: pd.DataFrame, fast_period=10, slow_period=50, ma_type="SMA"
-    ) -> tuple[pd.Series, pd.Series]:
+    ) -> SignalResult:
         close = df["close"]
         ewm = ma_type.upper() == "EMA"
 
@@ -41,4 +41,4 @@ class MACrossover(BaseStrategy):
         entries = fast_ma.vbt.crossed_above(slow_ma)
         exits = fast_ma.vbt.crossed_below(slow_ma)
 
-        return entries, exits
+        return SignalResult(entries=entries, exits=exits)

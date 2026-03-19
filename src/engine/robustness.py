@@ -7,6 +7,7 @@ import pandas as pd
 import vectorbt as vbt
 
 from src.strategies.base import BaseStrategy
+from src.engine.runner import run_backtest
 
 
 @dataclass
@@ -26,7 +27,7 @@ def test_signal_delay(
     params: dict,
     delays: list[int] | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
 ) -> pd.DataFrame:
     """Test strategy with delayed entry/exit signals.
@@ -37,38 +38,45 @@ def test_signal_delay(
     if delays is None:
         delays = [0, 1, 2, 3, 5]
 
-    entries, exits = strategy.generate_signals(df, **params)
     results = []
 
     for delay in delays:
+        delayed_params = params.copy()
+        # For delay testing, we run full backtest with modified signals
+        result = run_backtest(strategy, df, delayed_params, init_cash, fees, freq=freq)
+
         if delay > 0:
+            # Re-run with delayed signals (only for VBT path, PM path handles internally)
+            entries, exits = strategy.generate_signals(df, **params)
             delayed_entries = entries.shift(delay).fillna(False).astype(bool)
             delayed_exits = exits.shift(delay).fillna(False).astype(bool)
-        else:
-            delayed_entries = entries
-            delayed_exits = exits
 
-        pf_kwargs = dict(
-            close=df["close"],
-            entries=delayed_entries,
-            exits=delayed_exits,
-            init_cash=init_cash,
-            fees=fees,
-        )
-        if freq:
-            pf_kwargs["freq"] = freq
+            pm_config = strategy.position_management(**params)
+            if pm_config is not None:
+                from src.engine.simulator import simulate
+                from src.engine.sim_result import build_simulation_result
+                sl_distances = strategy.compute_sl_distances(df, **params)
+                eq, tr, nt = simulate(df, delayed_entries, delayed_exits, sl_distances, pm_config, init_cash, fees)
+                sim_result = build_simulation_result(eq, tr, nt, df.index, init_cash, fees)
+                from src.engine.sim_result import BacktestResult
+                result = BacktestResult(sim_result=sim_result)
+            else:
+                pf_kwargs = dict(close=df["close"], entries=delayed_entries, exits=delayed_exits, init_cash=init_cash, fees=fees)
+                if freq:
+                    pf_kwargs["freq"] = freq
+                pf = vbt.Portfolio.from_signals(**pf_kwargs)
+                from src.engine.sim_result import BacktestResult
+                result = BacktestResult(portfolio=pf)
 
-        pf = vbt.Portfolio.from_signals(**pf_kwargs)
-        stats = pf.stats()
-
+        metrics = result.metrics
         results.append({
             "delay_bars": delay,
-            "total_return": _safe(stats, "Total Return [%]"),
-            "sharpe_ratio": _safe(stats, "Sharpe Ratio"),
-            "win_rate": _safe(stats, "Win Rate [%]"),
-            "profit_factor": _safe(stats, "Profit Factor"),
-            "max_drawdown": _safe(stats, "Max Drawdown [%]"),
-            "total_trades": int(_safe(stats, "Total Trades", 0)),
+            "total_return": metrics.get("total_return", 0.0),
+            "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+            "win_rate": metrics.get("win_rate", 0.0),
+            "profit_factor": metrics.get("profit_factor", 0.0),
+            "max_drawdown": metrics.get("max_drawdown_pct", 0.0),
+            "total_trades": int(metrics.get("total_trades", 0)),
         })
 
     return pd.DataFrame(results)
@@ -81,7 +89,7 @@ def test_noise_injection(
     noise_levels: list[float] | None = None,
     n_trials: int = 20,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -108,23 +116,11 @@ def test_noise_injection(
             for col in ["open", "high", "low", "close"]:
                 noisy_df[col] = noisy_df[col] * noise
 
-            entries, exits = strategy.generate_signals(noisy_df, **params)
-
-            pf_kwargs = dict(
-                close=noisy_df["close"],
-                entries=entries,
-                exits=exits,
-                init_cash=init_cash,
-                fees=fees,
-            )
-            if freq:
-                pf_kwargs["freq"] = freq
-
-            pf = vbt.Portfolio.from_signals(**pf_kwargs)
-            stats = pf.stats()
-            trial_sharpes.append(_safe(stats, "Sharpe Ratio"))
-            trial_returns.append(_safe(stats, "Total Return [%]"))
-            trial_dds.append(_safe(stats, "Max Drawdown [%]"))
+            result = run_backtest(strategy, noisy_df, params, init_cash, fees, freq=freq)
+            metrics = result.metrics
+            trial_sharpes.append(metrics.get("sharpe_ratio", 0.0))
+            trial_returns.append(metrics.get("total_return", 0.0))
+            trial_dds.append(metrics.get("max_drawdown_pct", 0.0))
 
         results.append({
             "noise_pct": noise_pct,
@@ -146,7 +142,7 @@ def test_param_sensitivity(
     param_name: str,
     perturbations: list[float] | None = None,
     init_cash: float = 10_000.0,
-    fees: float = 0.0001,
+    fees: float = 0.0,
     freq: str | None = None,
 ) -> pd.DataFrame:
     """Test how sensitive the strategy is to small changes in a parameter.
@@ -169,29 +165,18 @@ def test_param_sensitivity(
         test_params = base_params.copy()
         test_params[param_name] = perturbed_value
 
-        entries, exits = strategy.generate_signals(df, **test_params)
-        pf_kwargs = dict(
-            close=df["close"],
-            entries=entries,
-            exits=exits,
-            init_cash=init_cash,
-            fees=fees,
-        )
-        if freq:
-            pf_kwargs["freq"] = freq
-
-        pf = vbt.Portfolio.from_signals(**pf_kwargs)
-        stats = pf.stats()
+        result = run_backtest(strategy, df, test_params, init_cash, fees, freq=freq)
+        metrics = result.metrics
 
         results.append({
             "perturbation": f"{pct:+.0%}",
             "param_value": perturbed_value,
-            "total_return": _safe(stats, "Total Return [%]"),
-            "sharpe_ratio": _safe(stats, "Sharpe Ratio"),
-            "win_rate": _safe(stats, "Win Rate [%]"),
-            "profit_factor": _safe(stats, "Profit Factor"),
-            "max_drawdown": _safe(stats, "Max Drawdown [%]"),
-            "total_trades": int(_safe(stats, "Total Trades", 0)),
+            "total_return": metrics.get("total_return", 0.0),
+            "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
+            "win_rate": metrics.get("win_rate", 0.0),
+            "profit_factor": metrics.get("profit_factor", 0.0),
+            "max_drawdown": metrics.get("max_drawdown_pct", 0.0),
+            "total_trades": int(metrics.get("total_trades", 0)),
         })
 
     return pd.DataFrame(results)

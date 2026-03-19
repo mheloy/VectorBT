@@ -3,7 +3,7 @@
 import vectorbt as vbt
 import pandas as pd
 
-from .base import BaseStrategy, StrategyParam
+from .base import BaseStrategy, StrategyParam, SignalResult
 
 
 class RSIReversal(BaseStrategy):
@@ -31,7 +31,7 @@ class RSIReversal(BaseStrategy):
 
     def generate_signals(
         self, df: pd.DataFrame, rsi_period=14, oversold=30, overbought=70
-    ) -> tuple[pd.Series, pd.Series]:
+    ) -> SignalResult:
         close = df["close"]
         rsi = vbt.RSI.run(close, window=int(rsi_period)).rsi
 
@@ -40,4 +40,4 @@ class RSIReversal(BaseStrategy):
         # Sell when RSI crosses below overbought from above
         exits = rsi.vbt.crossed_below(overbought)
 
-        return entries, exits
+        return SignalResult(entries=entries, exits=exits)

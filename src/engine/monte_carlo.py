@@ -34,7 +34,7 @@ class MonteCarloResult:
 
 
 def run_monte_carlo(
-    portfolio,
+    result,
     n_simulations: int = 1000,
     ruin_threshold_pct: float = 50.0,
     seed: int | None = 42,
@@ -45,24 +45,33 @@ def run_monte_carlo(
     N times, and builds alternative equity curves to assess robustness.
 
     Args:
-        portfolio: VectorBT Portfolio object.
+        result: BacktestResult or VectorBT Portfolio object.
         n_simulations: Number of random shuffles.
         ruin_threshold_pct: Account loss % considered "ruin" (e.g., 50 = 50% loss).
         seed: Random seed for reproducibility.
     """
     rng = np.random.default_rng(seed)
 
-    # Extract trade PnLs
-    trades = portfolio.trades.records_readable
-    if trades.empty or "PnL" not in trades.columns:
-        raise ValueError("No trades found in portfolio or PnL column missing")
+    # Support both BacktestResult and raw Portfolio
+    from src.engine.sim_result import BacktestResult
+    if isinstance(result, BacktestResult):
+        pnls = result.trade_pnls
+        if pnls.empty:
+            raise ValueError("No trades found in backtest result")
+        trade_pnls = pnls.values
+        init_cash = result.init_cash
+    else:
+        # Legacy: raw VBT Portfolio
+        portfolio = result
+        trades = portfolio.trades.records_readable
+        if trades.empty or "PnL" not in trades.columns:
+            raise ValueError("No trades found in portfolio or PnL column missing")
+        trade_pnls = trades["PnL"].values
+        init_cash = portfolio.init_cash
+        if isinstance(init_cash, pd.Series):
+            init_cash = init_cash.iloc[0]
 
-    trade_pnls = trades["PnL"].values
     n_trades = len(trade_pnls)
-    init_cash = portfolio.init_cash
-
-    if isinstance(init_cash, pd.Series):
-        init_cash = init_cash.iloc[0]
     init_cash = float(init_cash)
 
     # Original equity curve from trades

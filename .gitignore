@@ -10,3 +10,6 @@ results/*.json
 dist/
 build/
 .streamlit/
+.streamlit.pid
+.streamlit.log
+.claude/

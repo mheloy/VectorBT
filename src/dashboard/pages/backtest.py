@@ -7,9 +7,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data.loader import load_m5, resample, TIMEFRAMES
+from src.strategies.base import BaseStrategy
 from src.strategies.registry import get_all_strategies
 from src.engine.runner import run_backtest
-from src.engine.metrics import extract_metrics, get_equity_curve, get_drawdown_series, get_trades_df
 from src.engine.kelly import kelly_from_metrics
 from src.storage.db import save_run
 from src.storage.models import BacktestRun, BacktestData
@@ -28,14 +28,18 @@ strategies = get_all_strategies()
 strategy_name = st.sidebar.selectbox("Strategy", list(strategies.keys()))
 strategy = strategies[strategy_name]
 
-timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("1H"))
+timeframe = st.sidebar.selectbox("Timeframe", TIMEFRAMES, index=TIMEFRAMES.index("5M"))
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Parameters")
 
-# Build parameter inputs dynamically
+# Build parameter inputs dynamically — separate core params from PM params
 param_values = {}
+pm_param_names = {"adv_pm", "tp1_r", "tp1_pct", "tp2_r", "tp2_pct", "be_trigger_r", "final_tp_r", "trail_mode", "risk_pct", "sizing_mode", "fixed_lot_units"}
+
 for p in strategy.parameters():
+    if p.name in pm_param_names:
+        continue  # Show PM params separately below
     if p.choices:
         param_values[p.name] = st.sidebar.selectbox(
             p.description or p.name, p.choices,
@@ -58,14 +62,97 @@ for p in strategy.parameters():
             key=f"param_{p.name}",
         )
 
+# --- Position Management section (only for strategies that support it) ---
+has_pm_support = type(strategy).position_management is not BaseStrategy.position_management
+if has_pm_support:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Position Management")
+
+    pm_params = {p.name: p for p in strategy.parameters() if p.name in pm_param_names}
+
+    adv_pm = st.sidebar.selectbox(
+        "Advanced PM (Partial TP, BE, Trail)",
+        ["On", "Off"],
+        index=1,  # Default Off
+        key="param_adv_pm",
+    )
+    param_values["adv_pm"] = adv_pm
+
+    if adv_pm == "On":
+        st.sidebar.caption("Partial Take Profits")
+        col_a, col_b = st.sidebar.columns(2)
+        param_values["tp1_r"] = col_a.slider("TP1 R-mult", 0.5, 5.0, 1.5, 0.1, key="param_tp1_r")
+        param_values["tp1_pct"] = col_b.slider("TP1 %", 0.1, 0.9, 0.50, 0.05, key="param_tp1_pct")
+        col_c, col_d = st.sidebar.columns(2)
+        param_values["tp2_r"] = col_c.slider("TP2 R-mult", 1.0, 8.0, 2.9, 0.1, key="param_tp2_r")
+        param_values["tp2_pct"] = col_d.slider("TP2 %", 0.1, 0.5, 0.30, 0.05, key="param_tp2_pct")
+
+        st.sidebar.caption("Break-Even & Final TP")
+        param_values["be_trigger_r"] = st.sidebar.slider("BE Trigger R", 0.3, 3.0, 1.0, 0.1, key="param_be_trigger_r")
+        param_values["final_tp_r"] = st.sidebar.slider("Final TP R (runner)", 1.5, 10.0, 3.0, 0.5, key="param_final_tp_r")
+
+        st.sidebar.caption("Trailing")
+        param_values["trail_mode"] = st.sidebar.selectbox("Trail Mode", ["st_line", "atr_stages"], index=0, key="param_trail_mode")
+        if param_values["trail_mode"] == "atr_stages":
+            st.sidebar.caption("ATR Stages: 0.67R/1.0x, 1.0R/0.8x, 1.33R/0.6x")
+        else:
+            st.sidebar.caption("Runner trails SuperTrend line (natural S/R)")
+
+        st.sidebar.caption("Position Sizing")
+        sizing_mode = st.sidebar.selectbox("Sizing Mode", ["risk_pct", "fixed_lot"], index=0, key="param_sizing_mode",
+                                           format_func=lambda x: "Risk % of Equity" if x == "risk_pct" else "Fixed Lot Size")
+        param_values["sizing_mode"] = sizing_mode
+        if sizing_mode == "risk_pct":
+            param_values["risk_pct"] = st.sidebar.slider("Risk % per trade", 0.5, 10.0, 3.0, 0.5, key="param_risk_pct") / 100
+            param_values["fixed_lot_units"] = 1.0
+        else:
+            param_values["fixed_lot_units"] = st.sidebar.number_input("Lot Size (units)", value=1.0, min_value=0.01, step=0.1, key="param_fixed_lot_units")
+            param_values["risk_pct"] = 0.03  # unused but needs a value
+    else:
+        # Set defaults so they're in param_values but PM is off
+        for pn in pm_param_names:
+            if pn not in param_values:
+                param_values[pn] = pm_params[pn].default if pn in pm_params else "Off"
+
 st.sidebar.markdown("---")
-st.sidebar.subheader("Risk Management")
+st.sidebar.subheader("Execution Model")
+execution_mode = st.sidebar.selectbox(
+    "Execution Timing",
+    ["next_bar_open", "same_bar_close"],
+    index=0,
+    format_func=lambda x: "Next Bar Open (realistic)" if x == "next_bar_open" else "Same Bar Close (legacy)",
+)
+
+st.sidebar.subheader("Cost Model")
 init_cash = st.sidebar.number_input("Initial Cash ($)", value=10000.0, step=1000.0)
-fees = st.sidebar.number_input("Fees (fraction)", value=0.0001, step=0.0001, format="%.4f")
-use_sl = st.sidebar.checkbox("Stop Loss")
-sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5, disabled=not use_sl) / 100 if use_sl else None
-use_tp = st.sidebar.checkbox("Take Profit")
-tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5, disabled=not use_tp) / 100 if use_tp else None
+fees = st.sidebar.number_input("Commission (fraction)", value=0.000006, step=0.000001, format="%.6f",
+                                help="ECN commission as fraction of notional. Default: $3/lot at $5000 gold")
+slippage = st.sidebar.number_input("Slippage (fraction)", value=0.000004, step=0.000001, format="%.6f",
+                                    help="Half-spread as fraction of price. Default: 4pt spread on XAUUSD")
+
+# Check if strategy provides dynamic ATR-based stops
+_has_dynamic_stops = type(strategy).compute_stops is not BaseStrategy.compute_stops
+# If advanced PM is on, stops are handled by the simulator
+_pm_active = param_values.get("adv_pm") == "On"
+
+if _pm_active:
+    st.sidebar.info("SL/TP: Managed by advanced PM (partial TP + trailing)")
+    sl_stop = None
+    tp_stop = None
+elif _has_dynamic_stops:
+    st.sidebar.info("SL/TP: ATR-based (see strategy params above)")
+    use_override = st.sidebar.checkbox("Override with fixed %")
+    if use_override:
+        sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5) / 100
+        tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5) / 100
+    else:
+        sl_stop = None
+        tp_stop = None
+else:
+    use_sl = st.sidebar.checkbox("Stop Loss")
+    sl_stop = st.sidebar.number_input("SL (%)", value=2.0, step=0.5, disabled=not use_sl) / 100 if use_sl else None
+    use_tp = st.sidebar.checkbox("Take Profit")
+    tp_stop = st.sidebar.number_input("TP (%)", value=4.0, step=0.5, disabled=not use_tp) / 100 if use_tp else None
 
 # --- Run ---
 if st.sidebar.button("Run Backtest", type="primary", use_container_width=True):
@@ -73,31 +160,34 @@ if st.sidebar.button("Run Backtest", type="primary", use_container_width=True):
         df = resample(raw_data, timeframe)
 
         freq_map = {"5M": "5min", "15M": "15min", "30M": "30min", "1H": "1h", "4H": "4h", "D": "1D"}
-        portfolio = run_backtest(
+        result = run_backtest(
             strategy=strategy,
             df=df,
             params=param_values,
             init_cash=init_cash,
             fees=fees,
+            slippage=slippage,
             sl_stop=sl_stop,
             tp_stop=tp_stop,
             freq=freq_map.get(timeframe),
+            execution_mode=execution_mode,
         )
 
-    st.session_state["portfolio"] = portfolio
+    st.session_state["bt_result"] = result
     st.session_state["backtest_df"] = df
     st.session_state["backtest_params"] = param_values
     st.session_state["backtest_strategy"] = strategy_name
     st.session_state["backtest_tf"] = timeframe
     st.session_state["backtest_config"] = {
-        "init_cash": init_cash, "fees": fees, "sl_stop": sl_stop, "tp_stop": tp_stop,
+        "init_cash": init_cash, "fees": fees, "slippage": slippage,
+        "sl_stop": sl_stop, "tp_stop": tp_stop, "execution_mode": execution_mode,
     }
 
 # --- Display results ---
-if "portfolio" in st.session_state:
-    portfolio = st.session_state["portfolio"]
+if "bt_result" in st.session_state:
+    result = st.session_state["bt_result"]
     df = st.session_state["backtest_df"]
-    metrics = extract_metrics(portfolio)
+    metrics = result.metrics
     kelly = kelly_from_metrics(metrics)
 
     # --- Metrics cards ---
@@ -115,9 +205,21 @@ if "portfolio" in st.session_state:
     col9.metric("Kelly (Half)", f"{kelly.half_kelly_pct:.1f}%")
     col10.metric("Recommended Risk", f"{kelly.recommended_risk_pct:.1f}%")
 
+    if metrics["total_trades"] < 30:
+        st.warning("Low trade count — results may not be statistically significant (< 30 trades)")
+
+    # --- Exit type breakdown (simulator path only) ---
+    if result.is_simulator and "exit_type_breakdown" in metrics:
+        breakdown = metrics["exit_type_breakdown"]
+        if breakdown:
+            st.subheader("Exit Type Breakdown")
+            cols = st.columns(len(breakdown))
+            for idx, (exit_type, count) in enumerate(breakdown.items()):
+                cols[idx].metric(exit_type, count)
+
     # --- Equity curve ---
     st.subheader("Equity Curve")
-    equity = get_equity_curve(portfolio)
+    equity = result.equity_curve
     fig_eq = go.Figure()
     fig_eq.add_trace(go.Scatter(x=equity.index, y=equity.values, mode="lines", name="Portfolio Value"))
     fig_eq.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0), yaxis_title="Value ($)")
@@ -125,7 +227,7 @@ if "portfolio" in st.session_state:
 
     # --- Drawdown ---
     st.subheader("Drawdown")
-    dd = get_drawdown_series(portfolio)
+    dd = result.drawdown_series
     fig_dd = go.Figure()
     fig_dd.add_trace(go.Scatter(
         x=dd.index, y=dd.values, mode="lines", fill="tozeroy",
@@ -136,7 +238,7 @@ if "portfolio" in st.session_state:
 
     # --- Trade table ---
     st.subheader("Trades")
-    trades_df = get_trades_df(portfolio)
+    trades_df = result.trades_df
     if not trades_df.empty:
         st.dataframe(trades_df, use_container_width=True, height=400)
     else:

@@ -1,0 +1,489 @@
+"""SuperTrend strategy with optional H1 timeframe confirmation filter.
+
+Ported from live MT5 bot at /home/mheloy/SuperTrendMT5Linux/.
+Indicator logic matches PineScript's ta.supertrend() convention:
+  direction = -1  -> price ABOVE SuperTrend line -> UPTREND  -> BUY signal
+  direction = +1  -> price BELOW SuperTrend line -> DOWNTREND -> SELL signal
+"""
+
+import numpy as np
+import pandas as pd
+
+from .base import BaseStrategy, StrategyParam
+from src.engine.position_management import (
+    PartialTPConfig,
+    PositionManagementConfig,
+    TrailingStageConfig,
+)
+
+
+# ---------------------------------------------------------------------------
+# SuperTrend indicator helpers (ported from bot/core/indicators.py)
+# ---------------------------------------------------------------------------
+
+
+def _price_source(df: pd.DataFrame, source: str = "hl2") -> pd.Series:
+    """Compute price source series from OHLC data."""
+    if source == "close":
+        return df["close"].copy()
+    elif source == "hl2":
+        return (df["high"] + df["low"]) / 2.0
+    elif source == "hlc3":
+        return (df["high"] + df["low"] + df["close"]) / 3.0
+    elif source == "ohlc4":
+        return (df["open"] + df["high"] + df["low"] + df["close"]) / 4.0
+    else:
+        raise ValueError(f"Unknown source: {source}")
+
+
+def _true_range(df: pd.DataFrame) -> pd.Series:
+    """Calculate True Range."""
+    high_low = df["high"] - df["low"]
+    high_prev_close = (df["high"] - df["close"].shift(1)).abs()
+    low_prev_close = (df["low"] - df["close"].shift(1)).abs()
+    tr = pd.concat([high_low, high_prev_close, low_prev_close], axis=1).max(axis=1)
+    return tr
+
+
+def _rma(series: pd.Series, period: int) -> pd.Series:
+    """Wilder's smoothing (RMA) matching PineScript's ta.rma().
+
+    Seeded with SMA of first `period` values, then:
+        rma = alpha * value + (1 - alpha) * rma_prev
+    where alpha = 1 / period.
+    """
+    values = series.values
+    n = len(values)
+    result = np.full(n, np.nan)
+    alpha = 1.0 / period
+
+    # Find first window of `period` non-NaN values for SMA seed
+    count = 0
+    seed_end = -1
+    for i in range(n):
+        if not np.isnan(values[i]):
+            count += 1
+            if count == period:
+                seed_end = i
+                break
+        else:
+            count = 0
+
+    if seed_end < 0:
+        return pd.Series(result, index=series.index)
+
+    # Seed with SMA
+    result[seed_end] = np.mean(values[seed_end - period + 1 : seed_end + 1])
+
+    # RMA forward
+    for i in range(seed_end + 1, n):
+        if np.isnan(values[i]):
+            result[i] = result[i - 1]
+        else:
+            result[i] = alpha * values[i] + (1.0 - alpha) * result[i - 1]
+
+    return pd.Series(result, index=series.index)
+
+
+def _atr(df: pd.DataFrame, period: int = 14, method: str = "sma") -> pd.Series:
+    """ATR using SMA or Wilder's RMA smoothing.
+
+    method='sma' matches backtest-engine (rolling mean of TR).
+    method='rma' matches PineScript's ta.rma().
+    """
+    tr = _true_range(df)
+    if method == "rma":
+        return _rma(tr, period)
+    # SMA (default) — matches backtest-engine
+    return tr.rolling(window=period, min_periods=period).mean()
+
+
+def calc_supertrend(
+    df: pd.DataFrame,
+    period: int = 17,
+    factor: float = 1.8,
+    source: str = "hl2",
+    atr_method: str = "sma",
+) -> pd.DataFrame:
+    """Calculate SuperTrend indicator.
+
+    Returns DataFrame with columns: supertrend, direction
+    direction: -1 = uptrend (BUY), +1 = downtrend (SELL)
+    """
+    src = _price_source(df, source)
+    spread = _atr(df, period, method=atr_method)
+
+    upper_band = src + factor * spread
+    lower_band = src - factor * spread
+
+    n = len(df)
+    close = df["close"].values
+    direction = np.zeros(n, dtype=np.int8)
+    supertrend = np.full(n, np.nan, dtype=np.float64)
+
+    final_upper = upper_band.values.copy()
+    final_lower = lower_band.values.copy()
+
+    # Find first valid index (where spread is not NaN)
+    first_valid = 0
+    for i in range(n):
+        if not np.isnan(final_upper[i]) and not np.isnan(final_lower[i]):
+            first_valid = i
+            break
+
+    # Band ratcheting
+    for i in range(first_valid + 1, n):
+        prev_upper = final_upper[i - 1]
+        prev_lower = final_lower[i - 1]
+        prev_close = close[i - 1]
+
+        # Upper band only ratchets down
+        if not np.isnan(prev_upper):
+            if not (final_upper[i] < prev_upper or prev_close > prev_upper):
+                final_upper[i] = prev_upper
+
+        # Lower band only ratchets up
+        if not np.isnan(prev_lower):
+            if not (final_lower[i] > prev_lower or prev_close < prev_lower):
+                final_lower[i] = prev_lower
+
+    # Determine direction and SuperTrend value
+    for i in range(first_valid, n):
+        if i == first_valid:
+            direction[i] = 1  # default downtrend (matches PineScript)
+            supertrend[i] = final_upper[i]
+            continue
+
+        prev_dir = direction[i - 1]
+
+        if prev_dir == -1:  # was uptrend
+            if close[i] < final_lower[i]:
+                direction[i] = 1  # flip to downtrend
+                supertrend[i] = final_upper[i]
+            else:
+                direction[i] = -1  # stay uptrend
+                supertrend[i] = final_lower[i]
+        else:  # was downtrend
+            if close[i] > final_upper[i]:
+                direction[i] = -1  # flip to uptrend
+                supertrend[i] = final_lower[i]
+            else:
+                direction[i] = 1  # stay downtrend
+                supertrend[i] = final_upper[i]
+
+    return pd.DataFrame(
+        {"supertrend": supertrend, "direction": direction},
+        index=df.index,
+    )
+
+
+# ---------------------------------------------------------------------------
+# H1 filter helper
+# ---------------------------------------------------------------------------
+
+
+def _h1_direction(
+    df: pd.DataFrame,
+    period: int = 17,
+    factor: float = 1.8,
+    source: str = "hl2",
+    atr_method: str = "sma",
+) -> pd.Series:
+    """Resample to H1, compute SuperTrend, forward-fill direction to original index.
+
+    Shifts H1 direction by 1 bar before forward-filling to avoid look-ahead bias
+    (only act on completed H1 candles).
+
+    Uses the SAME period/factor/source/atr_method as the entry signal (matches
+    live bot and backtest-engine behaviour).
+    """
+    h1 = df.resample("1h").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last"}
+    ).dropna(subset=["open"])
+
+    if len(h1) < period + 2:
+        # Not enough H1 data — return neutral (no filtering)
+        return pd.Series(0, index=df.index, dtype=np.int8)
+
+    st = calc_supertrend(h1, period, factor, source, atr_method=atr_method)
+    # Shift by 1 so current hour uses previous hour's completed direction
+    h1_dir = st["direction"].shift(1)
+    return h1_dir.reindex(df.index, method="ffill").fillna(0).astype(np.int8)
+
+
+def _ma_filter(
+    df: pd.DataFrame,
+    period: int = 200,
+    ma_type: str = "SMA",
+) -> pd.Series:
+    """Compute moving average for trend filtering."""
+    close = df["close"]
+    if ma_type.upper() == "EMA":
+        return close.ewm(span=period, adjust=False).mean()
+    return close.rolling(window=period, min_periods=period).mean()
+
+
+# ---------------------------------------------------------------------------
+# Strategy class
+# ---------------------------------------------------------------------------
+
+
+class SuperTrendStrategy(BaseStrategy):
+    """SuperTrend trend-following strategy.
+
+    Enters long on uptrend flip (direction changes from +1 to -1).
+    Exits on downtrend flip (direction changes from -1 to +1).
+    Optional H1 SuperTrend filter confirms trend direction.
+    """
+
+    @property
+    def name(self) -> str:
+        return "SuperTrend"
+
+    def parameters(self) -> list[StrategyParam]:
+        return [
+            StrategyParam(
+                "period", default=20, min_val=5, max_val=50, step=1,
+                description="ATR period",
+            ),
+            StrategyParam(
+                "factor", default=1.2, min_val=0.5, max_val=5.0, step=0.1,
+                description="ATR multiplier",
+            ),
+            StrategyParam(
+                "source", default="hl2",
+                choices=["hl2", "close", "hlc3", "ohlc4"],
+                description="Price source",
+            ),
+            StrategyParam(
+                "atr_method", default="sma",
+                choices=["sma", "rma"],
+                description="ATR smoothing (sma=backtest-engine, rma=PineScript)",
+            ),
+            StrategyParam(
+                "filter_type", default="h1_supertrend",
+                choices=["h1_supertrend", "200ma", "none"],
+                description="Trend filter type",
+            ),
+            StrategyParam(
+                "direction_mode", default="both",
+                choices=["both", "long_only", "short_only"],
+                description="Allowed trade directions",
+            ),
+            StrategyParam(
+                "ma_filter_period", default=200, min_val=50, max_val=500, step=10,
+                description="MA filter period (used when filter_type=200ma)",
+            ),
+            StrategyParam(
+                "ma_filter_type", default="SMA",
+                choices=["SMA", "EMA"],
+                description="MA filter smoothing (used when filter_type=200ma)",
+            ),
+            StrategyParam(
+                "sl_atr_mult", default=1.0, min_val=0.5, max_val=5.0, step=0.1,
+                description="SL ATR multiplier",
+            ),
+            StrategyParam(
+                "rr_ratio", default=3.0, min_val=1.0, max_val=5.0, step=0.5,
+                description="Risk:Reward ratio",
+            ),
+            # Position management params
+            StrategyParam(
+                "adv_pm", default="On",
+                choices=["On", "Off"],
+                description="Advanced position management (partial TP, BE, trailing)",
+            ),
+            StrategyParam(
+                "tp1_r", default=1.2, min_val=0.1, max_val=5.0, step=0.1,
+                description="Partial TP1 R-multiple",
+            ),
+            StrategyParam(
+                "tp1_pct", default=0.33, min_val=0.1, max_val=0.9, step=0.05,
+                description="TP1 close fraction",
+            ),
+            StrategyParam(
+                "tp2_r", default=2.0, min_val=0.5, max_val=8.0, step=0.1,
+                description="Partial TP2 R-multiple",
+            ),
+            StrategyParam(
+                "tp2_pct", default=0.50, min_val=0.1, max_val=0.9, step=0.05,
+                description="TP2 close fraction",
+            ),
+            StrategyParam(
+                "be_trigger_r", default=1.0, min_val=0.3, max_val=3.0, step=0.1,
+                description="Break-even trigger R-multiple",
+            ),
+            StrategyParam(
+                "final_tp_r", default=0.0, min_val=0.0, max_val=10.0, step=0.5,
+                description="Final TP R-multiple (0=no cap, trails ST line only)",
+            ),
+            StrategyParam(
+                "trail_mode", default="st_line",
+                choices=["st_line", "atr_stages"],
+                description="Runner trailing mode",
+            ),
+            StrategyParam(
+                "risk_pct", default=0.03, min_val=0.005, max_val=0.10, step=0.005,
+                description="Risk % per trade",
+            ),
+        ]
+
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        period=20,
+        factor=1.2,
+        source="hl2",
+        atr_method="sma",
+        filter_type="h1_supertrend",
+        direction_mode="both",
+        ma_filter_period=200,
+        ma_filter_type="SMA",
+        sl_atr_mult=1.0,
+        rr_ratio=3.0,
+        **kwargs,
+    ) -> "SignalResult":
+        from .base import SignalResult
+
+        st = calc_supertrend(df, int(period), float(factor), source,
+                             atr_method=str(atr_method))
+        direction = st["direction"]
+
+        # Direction change signals
+        long_entries = (direction == -1) & (direction.shift(1) == 1)
+        long_exits = (direction == 1) & (direction.shift(1) == -1)
+        short_entries = (direction == 1) & (direction.shift(1) == -1)
+        short_exits = (direction == -1) & (direction.shift(1) == 1)
+
+        # Apply trend filter
+        filter_type = str(filter_type)
+        if filter_type == "h1_supertrend":
+            h1_dir = _h1_direction(df, int(period), float(factor), str(source),
+                                   atr_method=str(atr_method))
+            long_entries = long_entries & (h1_dir == -1)
+            short_entries = short_entries & (h1_dir == 1)
+        elif filter_type == "200ma":
+            ma = _ma_filter(df, int(ma_filter_period), str(ma_filter_type))
+            long_entries = long_entries & (df["close"] > ma)
+            short_entries = short_entries & (df["close"] < ma)
+        # filter_type == "none": no filtering
+
+        # Apply direction mode
+        direction_mode = str(direction_mode)
+        if direction_mode == "long_only":
+            short_entries = pd.Series(False, index=df.index)
+            short_exits = pd.Series(False, index=df.index)
+        elif direction_mode == "short_only":
+            long_entries = pd.Series(False, index=df.index)
+            long_exits = pd.Series(False, index=df.index)
+
+        # Warmup guard — suppress signals before indicators stabilize
+        warmup_bars = max(int(period), 14) + 1
+        long_entries.iloc[:warmup_bars] = False
+        long_exits.iloc[:warmup_bars] = False
+        short_entries.iloc[:warmup_bars] = False
+        short_exits.iloc[:warmup_bars] = False
+
+        # Clean NaN
+        long_entries = long_entries.fillna(False).astype(bool)
+        long_exits = long_exits.fillna(False).astype(bool)
+        short_entries = short_entries.fillna(False).astype(bool)
+        short_exits = short_exits.fillna(False).astype(bool)
+
+        return SignalResult(
+            entries=long_entries,
+            exits=long_exits,
+            short_entries=short_entries,
+            short_exits=short_exits,
+        )
+
+    def compute_supertrend_values(
+        self, df: pd.DataFrame, period=20, factor=1.2, source="hl2",
+        atr_method="sma", **params
+    ) -> pd.Series:
+        """Return the SuperTrend line values for ST-line trailing mode."""
+        st = calc_supertrend(df, int(period), float(factor), source,
+                             atr_method=str(atr_method))
+        return st["supertrend"]
+
+    def position_management(self, adv_pm="Off", tp1_r=1.2, tp1_pct=0.33,
+                            tp2_r=2.0, tp2_pct=0.50, be_trigger_r=1.0,
+                            final_tp_r=0.0, trail_mode="st_line",
+                            sizing_mode="risk_pct", risk_pct=0.03,
+                            fixed_lot_units=1.0, **params):
+        """Return advanced PM config when enabled."""
+        if str(adv_pm) != "On":
+            return None
+
+        return PositionManagementConfig(
+            partial_tps=[
+                PartialTPConfig(trigger_r=float(tp1_r), close_pct=float(tp1_pct)),
+                PartialTPConfig(trigger_r=float(tp2_r), close_pct=float(tp2_pct)),
+            ],
+            partial_tp_enabled=True,
+            be_enabled=True,
+            be_trigger_r=float(be_trigger_r),
+            be_offset_dollars=1.0,
+            trailing_stages=[
+                TrailingStageConfig(trigger_r=0.67, sl_multiplier=1.0),
+                TrailingStageConfig(trigger_r=1.0, sl_multiplier=0.8),
+                TrailingStageConfig(trigger_r=1.33, sl_multiplier=0.6),
+            ],
+            trailing_sl_enabled=True,
+            final_tp_r=float(final_tp_r),
+            trail_mode=str(trail_mode),
+            sizing_mode=str(sizing_mode),
+            risk_pct=float(risk_pct),
+            fixed_lot_units=float(fixed_lot_units),
+        )
+
+    def compute_sl_distances(
+        self, df: pd.DataFrame, sl_atr_mult=1.0, atr_method="sma", **params
+    ) -> pd.Series:
+        """Compute per-bar SL distance in dollars (1R = ATR(14) * sl_atr_mult).
+
+        Uses ATR(14) on the entry timeframe directly (matches backtest-engine).
+        E.g. M5 data → ATR(14) on M5, M15 data → ATR(14) on M15, etc.
+        """
+        sl_atr_mult = float(sl_atr_mult)
+        atr_method = str(atr_method)
+
+        if len(df) < 15:
+            return pd.Series(10.0, index=df.index)
+
+        atr_series = _atr(df, period=14, method=atr_method)
+
+        sl_dollars = atr_series * sl_atr_mult
+        # Fill NaN warmup period with first valid value
+        first_valid = sl_dollars.dropna()
+        fallback = float(first_valid.iloc[0]) if len(first_valid) > 0 else 10.0
+        sl_dollars = sl_dollars.fillna(fallback)
+        return sl_dollars
+
+    def compute_stops(
+        self, df: pd.DataFrame, sl_atr_mult=1.0, rr_ratio=3.0,
+        atr_method="sma", **params
+    ) -> tuple[pd.Series, pd.Series] | None:
+        """Compute per-bar SL/TP from ATR(14) on entry timeframe.
+
+        SL = ATR(14) * sl_atr_mult, converted to fraction of close.
+        TP = SL * rr_ratio.
+        """
+        sl_atr_mult = float(sl_atr_mult)
+        rr_ratio = float(rr_ratio)
+        atr_method = str(atr_method)
+
+        if len(df) < 15:
+            return None
+
+        atr_series = _atr(df, period=14, method=atr_method)
+
+        # Convert dollar-based ATR stop to fraction of close price
+        sl_pct = (atr_series * sl_atr_mult) / df["close"]
+        tp_pct = sl_pct * rr_ratio
+
+        # Fill NaN with conservative fallback (first few bars before ATR warms up)
+        sl_pct = sl_pct.fillna(sl_pct.dropna().iloc[0] if sl_pct.dropna().any() else 0.01)
+        tp_pct = tp_pct.fillna(tp_pct.dropna().iloc[0] if tp_pct.dropna().any() else 0.03)
+
+        return sl_pct, tp_pct

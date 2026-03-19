@@ -5,6 +5,7 @@ from .base import BaseStrategy
 from . import ma_crossover  # noqa: F401
 from . import rsi_reversal  # noqa: F401
 from . import bollinger_breakout  # noqa: F401
+from . import supertrend  # noqa: F401
 
 
 def get_all_strategies() -> dict[str, BaseStrategy]:
