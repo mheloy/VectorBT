@@ -174,19 +174,17 @@ if "wf_result" in st.session_state:
         st.dataframe(stability_data, use_container_width=True, hide_index=True)
 
     # --- Equity comparison ---
-    st.subheader("OOS Equity vs Full-Sample Equity")
-    fig = go.Figure()
+    # --- OOS Equity curve (log scale for compound growth) ---
+    st.subheader("Walk-Forward OOS Equity")
     if not result.oos_equity_curve.empty:
+        fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=result.oos_equity_curve.index, y=result.oos_equity_curve.values,
             mode="lines", name="Walk-Forward OOS", line=dict(color="blue", width=2),
         ))
-    fig.add_trace(go.Scatter(
-        x=result.full_sample_equity.index, y=result.full_sample_equity.values,
-        mode="lines", name="Full-Sample Optimized", line=dict(color="gray", width=1, dash="dash"),
-    ))
-    fig.update_layout(height=400, yaxis_title="Equity ($)", margin=dict(l=0, r=0, t=30, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=400, yaxis_title="Equity ($)", yaxis_type="log",
+                          margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig, use_container_width=True)
 
     # --- IS vs OOS Sharpe + Efficiency Ratio per window ---
     st.subheader("In-Sample vs Out-of-Sample per Window")
