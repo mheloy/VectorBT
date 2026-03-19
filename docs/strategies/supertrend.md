@@ -48,7 +48,7 @@ Trend-following strategy based on the SuperTrend indicator. Ported from live MT5
 
 ### Simple Mode (adv_pm=Off)
 Dynamic ATR-based SL/TP via VBT's `from_signals()`:
-- **Stop Loss**: ATR(14) on entry timeframe * `sl_atr_mult` (default 1.9x), converted to % of entry price per bar
+- **Stop Loss**: ATR(14) on entry timeframe * `sl_atr_mult` (default 1.0x), converted to % of entry price per bar
 - **Take Profit**: SL distance * `rr_ratio` (default 3.0 R:R)
 
 ### Advanced PM Mode (adv_pm=On)
@@ -76,6 +76,7 @@ Custom Numba JIT bar-by-bar simulator replicating the live MT5 bot's position ma
 | 2026-03-18 | SL ATR timeframe | Resampled to M15 | Entry timeframe (e.g. M5) | Aligned with backtest-engine: ATR(14) computed on entry TF, not resampled |
 | 2026-03-18 | Defaults | P16/F1.4/hlc3/sl1.5/tp1:0.5R/tp2:1.5R | P17/F1.8/hl2/sl1.9/tp1:1.2R/tp2:2.0R | Aligned with profitable backtest-engine config |
 | 2026-03-19 | Signals & Filters | long-only, h1_filter | bidirectional, filter_type | Added bidirectional (long+short) signals, 200MA filter, direction_mode, warmup guard. Replaced h1_filter with filter_type. Added slippage (0.000004) and calibrated fees (0.000006) from ECN trade data ($3/lot commission + 4pt spread). Next-bar-open execution default. Hold-out set in WFA. |
+| 2026-03-19 | Defaults | P17/F1.8/sl1.9/adv_pm=Off | P20/F1.2/sl1.0/adv_pm=On | WFA-optimized (6 windows, 180 combos, both directions, PM enabled). Verdict: PASS (ER=1.97, 100% windows profitable). Hold-out: PF=1.56, WR=50.1%, Sharpe=5.36. Tight SL (1.0x ATR) + lower factor (1.2) = faster ST with more signals. |
 
 ## Notes
 

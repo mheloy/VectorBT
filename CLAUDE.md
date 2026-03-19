@@ -10,7 +10,7 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 
 ## Architecture
 - **Engine layer** (`src/engine/`): Pure computation, no UI. Each module returns a dataclass result.
-- **Strategy layer** (`src/strategies/`): `BaseStrategy` ABC with `generate_signals(df, **params) -> (entries, exits)`. Registry auto-discovers via `__subclasses__()`.
+- **Strategy layer** (`src/strategies/`): `BaseStrategy` ABC with `generate_signals(df, **params) -> SignalResult`. `SignalResult` contains `entries`, `exits`, and optional `short_entries`/`short_exits`. Registry auto-discovers via `__subclasses__()`.
 - **Storage** (`src/storage/`): SQLite for metadata + JSON blobs for equity curves and trade lists.
 - **Dashboard** (`src/dashboard/`): Streamlit multipage app. Pages import from `src.*` (sys.path set in `app.py`).
 
@@ -26,7 +26,7 @@ VectorBT-based backtest engine for XAUUSD (Gold) trading strategies. Single-user
 - Strategies can optionally override `position_management(**params)` to enable advanced PM (partial TP, break-even, trailing SL) — routes to custom Numba simulator instead of VBT
 - **Dual-path runner**: `run_backtest()` returns `BacktestResult` which wraps either VBT Portfolio (simple strategies) or `SimulationResult` (PM strategies) with a unified interface
 - Optimizer stacks all param combos into multi-column DataFrames for a single `vbt.Portfolio.from_signals()` call (or per-combo simulation for PM strategies)
-- Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage; supports hold-out set (last 10% of data by default)
+- Walk-forward uses custom tiled OOS approach (not VBT's RollingSplitter) for full data coverage; supports hold-out set (last 10% of data by default). WFA metrics use position-size-independent measures (profit factor, win rate, Sharpe) instead of return % which is distorted by compound risk-based sizing. Default sweep centered on WFA-optimized values: period=[16-24], factor=[0.8-1.6], sl_atr_mult=[0.6-1.4] (5 values each, 125 combos)
 - Warmup guard suppresses signals during first `max(period, 14) + 1` bars to avoid indicator instability
 - Monte Carlo, regime analysis, and robustness testing are custom implementations (not in VBT open-source)
 - `StrategyParam` dataclass drives both dashboard sliders and optimizer grid ranges
