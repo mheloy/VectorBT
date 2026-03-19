@@ -31,7 +31,7 @@ st.sidebar.subheader("Sweep Parameters")
 _WF_SWEEP_PARAMS = {
     "period":      {"range": (16, 24), "step": 2},      # 16,18,20,22,24
     "factor":      {"range": (0.8, 1.6), "step": 0.2},  # 0.8,1.0,1.2,1.4,1.6
-    "sl_atr_mult": {"range": (0.6, 1.4), "step": 0.2},  # 0.6,0.8,1.0,1.2,1.4
+    "sl_atr_mult": {"range": (1.0, 2.0), "step": 0.2},  # 1.0,1.2,1.4,1.6,1.8,2.0
 }
 
 numeric_params = [p for p in strategy.parameters() if p.min_val is not None]
