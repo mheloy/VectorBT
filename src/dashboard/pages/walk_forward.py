@@ -149,7 +149,7 @@ if "wf_result" in st.session_state:
 
     # --- Metrics cards ---
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("WF OOS Return", f"{result.oos_total_return:.2f}%")
+    col1.metric("Avg OOS Return/Window", f"{result.oos_total_return:.2f}%")
     col2.metric("Avg Efficiency Ratio", f"{result.avg_efficiency_ratio:.2f}")
     col3.metric("Profitable Windows", f"{result.profitable_windows_pct:.0f}%")
     col4.metric("Full-Sample Return", f"{result.full_sample_return:.2f}%")

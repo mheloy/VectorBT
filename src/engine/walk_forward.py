@@ -331,9 +331,10 @@ def run_walk_forward(
     summary_df = pd.DataFrame(summary_data)
 
     # Compute OOS aggregate metrics
-    oos_total_return = 0.0
-    if not oos_equity_curve.empty:
-        oos_total_return = (oos_equity_curve.iloc[-1] / oos_equity_curve.iloc[0] - 1) * 100
+    # Use average per-window return (not compounded total, which becomes unrealistic
+    # with leveraged risk-based sizing across many windows)
+    oos_window_returns = [w.oos_return for w in windows]
+    oos_total_return = float(np.mean(oos_window_returns)) if oos_window_returns else 0.0
 
     # Average OOS Sharpe (excluding inf)
     valid_sharpes = [w.oos_sharpe for w in windows if not np.isinf(w.oos_sharpe)]
