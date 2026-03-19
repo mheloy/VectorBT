@@ -26,10 +26,12 @@ st.sidebar.subheader("Sweep Parameters")
 
 # Params to sweep in WFA (signal + SL only, matching backtest-engine approach).
 # Other params (TP levels, BE, risk_pct) are kept fixed at defaults.
+# Centered on WFA-optimized values (2026-03-19): period=20, factor=1.2, sl_atr_mult=1.0
+# 2 steps each direction from center = 5 variations per param.
 _WF_SWEEP_PARAMS = {
-    "period":      {"range": (15, 19), "step": 2},
-    "factor":      {"range": (1.5, 2.1), "step": 0.3},
-    "sl_atr_mult": {"range": (1.5, 2.3), "step": 0.4},
+    "period":      {"range": (16, 24), "step": 2},      # 16,18,20,22,24
+    "factor":      {"range": (0.8, 1.6), "step": 0.2},  # 0.8,1.0,1.2,1.4,1.6
+    "sl_atr_mult": {"range": (0.6, 1.4), "step": 0.2},  # 0.6,0.8,1.0,1.2,1.4
 }
 
 numeric_params = [p for p in strategy.parameters() if p.min_val is not None]
