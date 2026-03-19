@@ -67,19 +67,31 @@ for p in numeric_params:
     else:
         sweep_params[p.name] = list(range(int(vals[0]), int(vals[1]) + 1, int(step)))
 
-# Show fixed params (held at defaults, not swept)
-fixed_names = [p.name for p in numeric_params if p.name not in _WF_SWEEP_PARAMS]
-if fixed_names:
-    with st.sidebar.expander("Fixed params (not swept)", expanded=False):
-        defaults = strategy.default_params()
-        for p in numeric_params:
-            if p.name in _WF_SWEEP_PARAMS:
-                continue
-            st.text(f"{p.name} = {defaults.get(p.name, p.default)}")
+# Show fixed params (configurable but not swept — single value each)
+pm_param_names = {"adv_pm", "tp1_r", "tp1_pct", "tp2_r", "tp2_pct", "be_trigger_r",
+                  "final_tp_r", "trail_mode", "risk_pct", "sizing_mode", "fixed_lot_units"}
+all_params = strategy.parameters()
+defaults = strategy.default_params()
 
-# Force adv_pm=On for SuperTrend PM path
-if "adv_pm" in {p.name for p in strategy.parameters()}:
-    sweep_params["adv_pm"] = ["On"]
+with st.sidebar.expander("Fixed params (not swept)", expanded=False):
+    for p in all_params:
+        if p.name in _WF_SWEEP_PARAMS:
+            continue
+        if p.choices:
+            val = st.selectbox(
+                p.description or p.name, p.choices,
+                index=p.choices.index(p.default),
+                key=f"wf_fixed_{p.name}",
+            )
+            sweep_params[p.name] = [val]
+        elif p.min_val is not None and p.max_val is not None:
+            val = st.slider(
+                p.description or p.name,
+                min_value=p.min_val, max_value=p.max_val,
+                value=p.default, step=p.step or 1,
+                key=f"wf_fixed_{p.name}",
+            )
+            sweep_params[p.name] = [val]
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Walk-Forward Settings")
