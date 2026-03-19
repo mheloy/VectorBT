@@ -213,11 +213,12 @@ if "wf_result" in st.session_state:
         st.subheader("Hold-Out Validation (Unseen Data)")
         st.caption("These results are from data never seen during optimization or WFA")
         hm = result.holdout_metrics
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Return", f"{hm.get('total_return', 0):.2f}%")
-        col2.metric("Sharpe", f"{hm.get('sharpe_ratio', 0):.2f}")
-        col3.metric("Win Rate", f"{hm.get('win_rate', 0):.1f}%")
-        col4.metric("Trades", f"{hm.get('total_trades', 0)}")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Profit Factor", f"{hm.get('profit_factor', 0):.2f}")
+        col2.metric("Win Rate", f"{hm.get('win_rate', 0):.1f}%")
+        col3.metric("Sharpe", f"{hm.get('sharpe_ratio', 0):.2f}")
+        col4.metric("Max Drawdown", f"{hm.get('max_drawdown_pct', 0):.1f}%")
+        col5.metric("Trades", f"{hm.get('total_trades', 0)}")
 
         if result.holdout_equity is not None and not result.holdout_equity.empty:
             st.subheader("Hold-Out Equity Curve")
@@ -226,7 +227,8 @@ if "wf_result" in st.session_state:
                 x=result.holdout_equity.index, y=result.holdout_equity.values,
                 mode="lines", name="Hold-Out", line=dict(color="green", width=2),
             ))
-            fig_ho.update_layout(height=350, yaxis_title="Equity ($)", margin=dict(l=0, r=0, t=30, b=0))
+            fig_ho.update_layout(height=350, yaxis_title="Equity ($)", yaxis_type="log",
+                                 margin=dict(l=0, r=0, t=30, b=0))
             st.plotly_chart(fig_ho, use_container_width=True)
 
         if result.holdout_params:
