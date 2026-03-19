@@ -37,6 +37,8 @@ class WalkForwardWindow:
     oos_sharpe: float
     oos_return: float
     oos_trades: int
+    oos_profit_factor: float
+    oos_win_rate: float
     efficiency_ratio: float  # OOS Sharpe / IS Sharpe (0 if IS Sharpe <= 0)
 
 
@@ -50,6 +52,8 @@ class WalkForwardResult:
     oos_total_return: float
     full_sample_return: float
     oos_sharpe: float
+    avg_oos_profit_factor: float
+    avg_oos_win_rate: float
     # Robustness metrics (aligned with backtest-engine)
     avg_efficiency_ratio: float
     profitable_windows_pct: float
@@ -232,6 +236,8 @@ def run_walk_forward(
             oos_sharpe=oos_sharpe_val,
             oos_return=oos_metrics.get("total_return", 0.0),
             oos_trades=int(oos_metrics.get("total_trades", 0)),
+            oos_profit_factor=oos_metrics.get("profit_factor", 0.0),
+            oos_win_rate=oos_metrics.get("win_rate", 0.0),
             efficiency_ratio=er,
         )
         windows.append(window)
@@ -326,6 +332,8 @@ def run_walk_forward(
             "OOS Sharpe": w.oos_sharpe,
             "OOS Return %": w.oos_return,
             "OOS Trades": w.oos_trades,
+            "OOS PF": w.oos_profit_factor,
+            "OOS WR %": w.oos_win_rate,
             "Efficiency Ratio": w.efficiency_ratio,
         })
     summary_df = pd.DataFrame(summary_data)
@@ -339,6 +347,12 @@ def run_walk_forward(
     # Average OOS Sharpe (excluding inf)
     valid_sharpes = [w.oos_sharpe for w in windows if not np.isinf(w.oos_sharpe)]
     avg_oos_sharpe = float(np.mean(valid_sharpes)) if valid_sharpes else 0.0
+
+    # Average OOS profit factor and win rate (position-size independent metrics)
+    oos_pfs = [w.oos_profit_factor for w in windows if w.oos_profit_factor > 0]
+    avg_oos_pf = float(np.mean(oos_pfs)) if oos_pfs else 0.0
+    oos_wrs = [w.oos_win_rate for w in windows]
+    avg_oos_wr = float(np.mean(oos_wrs)) if oos_wrs else 0.0
 
     # Hold-out backtest
     holdout_metrics = None
@@ -367,6 +381,8 @@ def run_walk_forward(
         oos_total_return=oos_total_return,
         full_sample_return=full_metrics.get("total_return", 0.0),
         oos_sharpe=avg_oos_sharpe,
+        avg_oos_profit_factor=avg_oos_pf,
+        avg_oos_win_rate=avg_oos_wr,
         avg_efficiency_ratio=avg_er,
         profitable_windows_pct=profitable_pct,
         verdict=verdict,

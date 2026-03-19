@@ -149,18 +149,15 @@ if "wf_result" in st.session_state:
 
     # --- Metrics cards ---
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Avg OOS Return/Window", f"{result.oos_total_return:.2f}%")
-    col2.metric("Avg Efficiency Ratio", f"{result.avg_efficiency_ratio:.2f}")
-    col3.metric("Profitable Windows", f"{result.profitable_windows_pct:.0f}%")
-    col4.metric("Full-Sample Return", f"{result.full_sample_return:.2f}%")
+    col1.metric("Avg OOS Profit Factor", f"{result.avg_oos_profit_factor:.2f}")
+    col2.metric("Avg OOS Win Rate", f"{result.avg_oos_win_rate:.1f}%")
+    col3.metric("Avg OOS Sharpe", f"{result.oos_sharpe:.2f}")
+    col4.metric("Avg Efficiency Ratio", f"{result.avg_efficiency_ratio:.2f}")
 
     col5, col6, col7 = st.columns(3)
-    col5.metric("Avg OOS Sharpe", f"{result.oos_sharpe:.2f}")
-    overfitting_ratio = 0.0
-    if result.full_sample_return != 0:
-        overfitting_ratio = result.oos_total_return / result.full_sample_return * 100
-    col6.metric("OOS/Full-Sample Ratio", f"{overfitting_ratio:.1f}%")
-    col7.metric("Total Windows", f"{len(result.windows)}")
+    col5.metric("Profitable Windows", f"{result.profitable_windows_pct:.0f}%")
+    col6.metric("Total Windows", f"{len(result.windows)}")
+    col7.metric("Total OOS Trades", f"{sum(w.oos_trades for w in result.windows)}")
 
     # --- Parameter Stability ---
     if result.param_stability:
